@@ -666,7 +666,7 @@ curl -X DELETE "http://localhost:8000/api/tokens/1" \
 
 **请求**
 ```bash
-curl -X GET "http://localhost:8000/api/characters/search?username=test&intent=cameo&limit=10" \
+curl -X GET "http://localhost:8000/v1/characters/search?username=test&intent=cameo&limit=10" \
   -H "Authorization: Bearer han1234"
 ```
 
@@ -683,7 +683,7 @@ curl -X GET "http://localhost:8000/api/characters/search?username=test&intent=ca
 
 **请求**
 ```bash
-curl -X GET "http://localhost:8000/api/feed?limit=8&cut=nf2_latest" \
+curl -X GET "http://localhost:8000/v1/feed?limit=8&cut=nf2_latest" \
   -H "Authorization: Bearer han1234"
 ```
 
@@ -700,7 +700,7 @@ curl -X GET "http://localhost:8000/api/feed?limit=8&cut=nf2_latest" \
 
 **请求**
 ```bash
-curl -X GET "http://localhost:8000/api/tokens/1/profile-feed?limit=12" \
+curl -X GET "http://localhost:8000/v1/tokens/1/profile-feed?limit=12" \
   -H "Authorization: Bearer han1234"
 ```
 
@@ -751,6 +751,90 @@ response = requests.post(API_URL, headers=headers, json={
 for line in response.iter_lines():
     if line:
         print(line.decode())
+```
+
+---
+
+## OpenAI 标准格式 API
+
+除了 `/v1/chat/completions` 端点外，还提供以下 OpenAI 标准格式的独立端点。
+
+**所有端点均为非流式输出，返回标准 JSON 结果。**
+
+> 📖 **详细文档**: [docs/OPENAI_API.md](docs/OPENAI_API.md)
+
+### 端点概览
+
+| 端点 | 功能 | 请求格式 |
+|------|------|----------|
+| `POST /v1/videos` | 视频生成 | form-data / JSON |
+| `POST /v1/images/generations` | 图片生成 | form-data / JSON |
+| `POST /v1/characters` | 角色卡创建 | form-data / JSON |
+
+### 快速示例
+
+**视频生成:**
+
+```bash
+curl -X POST "http://localhost:8000/v1/videos" \
+  -H "Authorization: Bearer han1234" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A cat walking in the garden", "model": "sora-video-10s"}'
+```
+
+```json
+{
+  "id": "video-xxx",
+  "object": "video",
+  "created": 1702388400,
+  "model": "sora-video-10s",
+  "data": [{"url": "http://localhost:8000/tmp/xxx.mp4", "revised_prompt": "A cat walking in the garden"}]
+}
+```
+
+**图片生成:**
+
+```bash
+curl -X POST "http://localhost:8000/v1/images/generations" \
+  -H "Authorization: Bearer han1234" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A beautiful sunset", "model": "sora-image-landscape"}'
+```
+
+```json
+{
+  "created": 1702388400,
+  "data": [{"url": "http://localhost:8000/tmp/xxx.png", "revised_prompt": "A beautiful sunset"}]
+}
+```
+
+**角色卡创建:**
+
+```bash
+curl -X POST "http://localhost:8000/v1/characters" \
+  -H "Authorization: Bearer han1234" \
+  -F video="@video.mp4;type=video/mp4" \
+  -F timestamps="0,3" \
+  -F username="my_cat"
+```
+
+```json
+{
+  "id": "char_xxx",
+  "object": "character",
+  "created": 1702388400,
+  "model": "sora-video-10s",
+  "data": {"cameo_id": "ch_xxx", "username": "my_cat", "message": "Character creation completed"}
+}
+```
+
+**使用角色生成视频 (在 prompt 中使用 @username):**
+
+```bash
+curl -X POST "http://localhost:8000/v1/videos" \
+  -H "Authorization: Bearer han1234" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "@my_cat running in the park", "model": "sora-video-10s"}'
 ```
 
 ---

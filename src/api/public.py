@@ -25,7 +25,7 @@ def set_dependencies(tm: TokenManager, database: Database, gh=None):
 # Stats API Endpoints
 # ============================================================
 
-@router.get("/api/public/stats")
+@router.get("/v1/stats")
 async def get_public_stats(api_key: str = Depends(verify_api_key_header)):
     """Get system statistics
     
@@ -56,7 +56,7 @@ async def get_public_stats(api_key: str = Depends(verify_api_key_header)):
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
 
 
-@router.get("/api/public/invite-code")
+@router.get("/v1/invite-codes")
 async def get_random_invite_code(api_key: str = Depends(verify_api_key_header)):
     """Get a random invite code from tokens with remaining Sora2 quota
     
@@ -105,7 +105,7 @@ async def get_random_invite_code(api_key: str = Depends(verify_api_key_header)):
 # Public API Endpoints (API Key authentication)
 # ============================================================
 
-@router.get("/api/profile/{username}")
+@router.get("/v1/profiles/{username}")
 async def get_user_profile(
     username: str,
     token_id: int = None,
@@ -146,7 +146,7 @@ async def get_user_profile(
         raise HTTPException(status_code=500, detail=f"Failed to get user profile: {str(e)}")
 
 
-@router.get("/api/user/{user_id}/feed")
+@router.get("/v1/users/{user_id}/feed")
 async def get_user_feed(
     user_id: str,
     limit: int = 8,
@@ -192,7 +192,7 @@ async def get_user_feed(
         raise HTTPException(status_code=500, detail=f"Failed to get user feed: {str(e)}")
 
 
-@router.get("/api/characters/search")
+@router.get("/v1/characters/search")
 async def search_characters(
     username: str,
     intent: str = "users",
@@ -276,7 +276,7 @@ async def search_characters(
         raise HTTPException(status_code=500, detail=f"Failed to search characters: {str(e)}")
 
 
-@router.get("/api/feed")
+@router.get("/v1/feed")
 async def get_public_feed(
     limit: int = 8,
     cut: str = "nf2_latest",
@@ -363,7 +363,7 @@ async def get_public_feed(
         raise HTTPException(status_code=500, detail=f"Failed to get public feed: {str(e)}")
 
 
-@router.get("/api/tokens/{token_id}/profile-feed")
+@router.get("/v1/tokens/{token_id}/profile-feed")
 async def get_token_profile_feed(
     token_id: int,
     limit: int = 8,
