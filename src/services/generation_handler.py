@@ -504,6 +504,7 @@ class GenerationHandler:
         heartbeat_interval = 10  # Send heartbeat every 10 seconds for image generation
         last_status_output_time = start_time  # Track last status output time for video generation
         video_status_interval = 30  # Output status every 30 seconds for video generation
+        post_link_emitted = False
 
         debug_logger.log_info(f"Starting task polling: task_id={task_id}, is_video={is_video}, timeout={timeout}s, max_attempts={max_attempts}")
 
@@ -591,17 +592,26 @@ class GenerationHandler:
                                 reason_str = item.get("reason_str") or item.get("markdown_reason_str")
                                 url = item.get("url") or item.get("downloadable_url")
 
-                                # Best-effort: derive permalink for the Sora post/share page.
-                                permalink = item.get("permalink")
-                                if not permalink:
-                                    post_id = item.get("post_id")
-                                    if not post_id:
-                                        attachment_id = item.get("id")
-                                        if isinstance(attachment_id, str) and "-attachment-" in attachment_id:
-                                            post_id = attachment_id.split("-attachment-", 1)[0]
+                                # Best-effort: derive post_id + permalink for the Sora post/share page.
+                                post_id = item.get("post_id")
+                                if not post_id:
+                                    attachment_id = item.get("id")
+                                    if isinstance(attachment_id, str) and "-attachment-" in attachment_id:
+                                        post_id = attachment_id.split("-attachment-", 1)[0]
 
-                                    if isinstance(post_id, str) and post_id.startswith("s_"):
-                                        permalink = f"https://sora.chatgpt.com/p/{post_id}"
+                                permalink = item.get("permalink")
+                                if not permalink and isinstance(post_id, str) and post_id.startswith("s_"):
+                                    permalink = f"https://sora.chatgpt.com/p/{post_id}"
+
+                                # Emit permalink early when available (useful for clients that want the share link).
+                                if stream and isinstance(permalink, str) and permalink and not post_link_emitted:
+                                    post_link_emitted = True
+                                    yield self._format_stream_chunk(
+                                        reasoning_content="Post created. Share link available.",
+                                        stage="generation",
+                                        status="processing",
+                                        details={"permalink": permalink}
+                                    )
 
                                 debug_logger.log_info(f"Found task {task_id} in drafts with kind: {kind}, reason_str: {reason_str}, has_url: {bool(url)}")
 
@@ -699,7 +709,7 @@ class GenerationHandler:
                                                     reasoning_content=f"Video published successfully. Using custom parse server to get watermark-free URL...",
                                                     stage="watermark_free",
                                                     status="processing",
-                                                    details={"post_id": post_id, "parse_method": "custom"}
+                                                    details={"permalink": permalink, "parse_method": "custom"}
                                                 )
 
                                             debug_logger.log_info(f"Using custom parse server: {watermark_config.custom_parse_url}")
@@ -720,7 +730,7 @@ class GenerationHandler:
                                                 reasoning_content=f"Video published successfully. Now {'caching' if config.cache_enabled else 'preparing'} watermark-free video...",
                                                 stage="watermark_free",
                                                 status="processing",
-                                                details={"post_id": post_id, "cache_enabled": config.cache_enabled}
+                                                details={"permalink": permalink, "cache_enabled": config.cache_enabled}
                                             )
 
                                         # Cache watermark-free video (if cache enabled)
@@ -1137,13 +1147,16 @@ class GenerationHandler:
 
         elif result_type == "video":
             result["url"] = url
-            result["permalink"] = permalink
+            if permalink is not None:
+                result["permalink"] = permalink
             # OpenAI Sora API compatible format
-            result["data"] = [{
+            video_item = {
                 "url": url,
                 "permalink": permalink,
                 "revised_prompt": None
-            }]
+            }
+            video_item = {k: v for k, v in video_item.items() if v is not None}
+            result["data"] = [video_item]
 
         elif result_type == "character":
             result["username"] = username
