@@ -50,7 +50,7 @@ generation_handler = GenerationHandler(sora_client, token_manager, load_balancer
 # Set dependencies for route modules
 api_routes.set_generation_handler(generation_handler)
 admin_routes.set_dependencies(token_manager, proxy_manager, db, generation_handler, concurrency_manager, webdav_manager)
-public_routes.set_dependencies(token_manager, db, generation_handler)
+public_routes.set_dependencies(token_manager, db, generation_handler, webdav_manager)
 openai_routes.set_generation_handler(generation_handler)
 
 # Include routers
