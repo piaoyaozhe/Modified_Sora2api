@@ -19,6 +19,8 @@ class SoraClient:
         self.proxy_manager = proxy_manager
         self.base_url = config.sora_base_url
         self.timeout = config.sora_timeout
+        # 持久化 session 字典，按 token 分组维护 cookie
+        self._sessions: Dict[str, AsyncSession] = {}
 
     @staticmethod
     def _generate_sentinel_token() -> str:
@@ -93,6 +95,12 @@ class SoraClient:
         else:
             return timeline
 
+    async def _get_session(self, token: str) -> AsyncSession:
+        """获取或创建持久化 session，维护 Cloudflare cookie"""
+        if token not in self._sessions:
+            self._sessions[token] = AsyncSession(impersonate="chrome120")
+        return self._sessions[token]
+
     async def _make_request(self, method: str, endpoint: str, token: str,
                            json_data: Optional[Dict] = None,
                            multipart: Optional[Dict] = None,
@@ -113,8 +121,23 @@ class SoraClient:
         
         proxy_url = await self.proxy_manager.get_proxy_url()
 
+        # 完整的 Chrome 浏览器请求头
         headers = {
-            "Authorization": f"Bearer {token}"
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Origin": "https://sora.chatgpt.com",
+            "Pragma": "no-cache",
+            "Priority": "u=1, i",
+            "Referer": "https://sora.chatgpt.com/",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
         }
 
         # 只在生成请求时添加 sentinel token
@@ -126,114 +149,115 @@ class SoraClient:
 
         url = f"{self.base_url}{endpoint}"
         
+        # 使用持久化 session 维护 cookie
+        session = await self._get_session(token)
+        
         for attempt in range(max_retries + 1):
-            async with AsyncSession() as session:
-                kwargs = {
-                    "headers": headers,
-                    "timeout": self.timeout,
-                    "impersonate": "chrome"  # 自动生成 User-Agent 和浏览器指纹
-                }
+            kwargs = {
+                "headers": headers,
+                "timeout": self.timeout,
+            }
 
-                if proxy_url:
-                    kwargs["proxy"] = proxy_url
+            if proxy_url:
+                kwargs["proxy"] = proxy_url
 
-                if json_data:
-                    kwargs["json"] = json_data
+            if json_data:
+                kwargs["json"] = json_data
 
-                if multipart:
-                    kwargs["multipart"] = multipart
+            if multipart:
+                kwargs["multipart"] = multipart
 
-                # Log request
-                debug_logger.log_request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    body=json_data,
-                    files=multipart,
-                    proxy=proxy_url
-                )
+            # Log request
+            debug_logger.log_request(
+                method=method,
+                url=url,
+                headers=headers,
+                body=json_data,
+                files=multipart,
+                proxy=proxy_url
+            )
 
-                # Record start time
-                start_time = time.time()
+            # Record start time
+            start_time = time.time()
 
-                # Make request
-                if method == "GET":
-                    response = await session.get(url, **kwargs)
-                elif method == "POST":
-                    response = await session.post(url, **kwargs)
+            # Make request
+            if method == "GET":
+                response = await session.get(url, **kwargs)
+            elif method == "POST":
+                response = await session.post(url, **kwargs)
+            else:
+                raise ValueError(f"Unsupported method: {method}")
+
+            # Calculate duration
+            duration_ms = (time.time() - start_time) * 1000
+
+            # Parse response
+            try:
+                response_json = response.json()
+            except:
+                response_json = None
+
+            # Log response
+            debug_logger.log_response(
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                body=response_json if response_json else response.text,
+                duration_ms=duration_ms
+            )
+
+            # Handle 429 rate limit with retry
+            if response.status_code == 429:
+                if attempt < max_retries:
+                    # Get retry-after header or use exponential backoff
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            wait_time = int(retry_after)
+                        except ValueError:
+                            wait_time = (attempt + 1) * 2  # 2, 4, 6 seconds
+                    else:
+                        wait_time = (attempt + 1) * 2  # Exponential backoff: 2, 4, 6 seconds
+                    
+                    print(f"⚠️ 429 Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    debug_logger.log_info(f"429 Rate limit, waiting {wait_time}s before retry {attempt + 1}/{max_retries}")
+                    await asyncio.sleep(wait_time)
+                    continue
                 else:
-                    raise ValueError(f"Unsupported method: {method}")
-
-                # Calculate duration
-                duration_ms = (time.time() - start_time) * 1000
-
-                # Parse response
-                try:
-                    response_json = response.json()
-                except:
-                    response_json = None
-
-                # Log response
-                debug_logger.log_response(
-                    status_code=response.status_code,
-                    headers=dict(response.headers),
-                    body=response_json if response_json else response.text,
-                    duration_ms=duration_ms
-                )
-
-                # Handle 429 rate limit with retry
-                if response.status_code == 429:
-                    if attempt < max_retries:
-                        # Get retry-after header or use exponential backoff
-                        retry_after = response.headers.get("Retry-After")
-                        if retry_after:
-                            try:
-                                wait_time = int(retry_after)
-                            except ValueError:
-                                wait_time = (attempt + 1) * 2  # 2, 4, 6 seconds
-                        else:
-                            wait_time = (attempt + 1) * 2  # Exponential backoff: 2, 4, 6 seconds
-                        
-                        print(f"⚠️ 429 Rate limit hit, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
-                        debug_logger.log_info(f"429 Rate limit, waiting {wait_time}s before retry {attempt + 1}/{max_retries}")
-                        await asyncio.sleep(wait_time)
-                        continue
-                    else:
-                        error_msg = f"Rate limit exceeded after {max_retries} retries"
-                        debug_logger.log_error(
-                            error_message=error_msg,
-                            status_code=429,
-                            response_text=response.text
-                        )
-                        raise Exception(error_msg)
-
-                # Check status
-                if response.status_code not in [200, 201]:
-                    # Try to extract error message from response JSON
-                    error_detail = None
-                    if response_json and isinstance(response_json, dict):
-                        error_obj = response_json.get("error", {})
-                        if isinstance(error_obj, dict):
-                            error_detail = error_obj.get("message")
-                    
-                    # Use extracted error message or fall back to raw response
-                    if error_detail:
-                        error_msg = f"{error_detail}"
-                    else:
-                        error_msg = f"API request failed: {response.status_code} - {response.text}"
-                    
-                    # Print error to console
-                    print(f"❌ [SoraClient] {method} {url} failed: {response.status_code}")
-                    print(f"   Response: {response.text[:500] if response.text else 'No response body'}")
-                    
+                    error_msg = f"Rate limit exceeded after {max_retries} retries"
                     debug_logger.log_error(
                         error_message=error_msg,
-                        status_code=response.status_code,
+                        status_code=429,
                         response_text=response.text
                     )
                     raise Exception(error_msg)
 
-                return response_json if response_json else response.json()
+            # Check status
+            if response.status_code not in [200, 201]:
+                # Try to extract error message from response JSON
+                error_detail = None
+                if response_json and isinstance(response_json, dict):
+                    error_obj = response_json.get("error", {})
+                    if isinstance(error_obj, dict):
+                        error_detail = error_obj.get("message")
+                
+                # Use extracted error message or fall back to raw response
+                if error_detail:
+                    error_msg = f"{error_detail}"
+                else:
+                    error_msg = f"API request failed: {response.status_code} - {response.text}"
+                
+                # Print error to console
+                print(f"❌ [SoraClient] {method} {url} failed: {response.status_code}")
+                print(f"   Response: {response.text[:500] if response.text else 'No response body'}")
+                
+                debug_logger.log_error(
+                    error_message=error_msg,
+                    status_code=response.status_code,
+                    response_text=response.text
+                )
+                raise Exception(error_msg)
+
+            return response_json if response_json else response.json()
     
     async def get_user_info(self, token: str) -> Dict[str, Any]:
         """Get user information"""
@@ -491,59 +515,71 @@ class SoraClient:
         proxy_url = await self.proxy_manager.get_proxy_url()
 
         headers = {
-            "Authorization": f"Bearer {token}"
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Origin": "https://sora.chatgpt.com",
+            "Pragma": "no-cache",
+            "Referer": "https://sora.chatgpt.com/",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
         }
 
-        async with AsyncSession() as session:
-            url = f"{self.base_url}/project_y/post/{post_id}"
+        session = await self._get_session(token)
+        url = f"{self.base_url}/project_y/post/{post_id}"
 
-            kwargs = {
-                "headers": headers,
-                "timeout": self.timeout,
-                "impersonate": "chrome"
-            }
+        kwargs = {
+            "headers": headers,
+            "timeout": self.timeout,
+        }
 
-            if proxy_url:
-                kwargs["proxy"] = proxy_url
+        if proxy_url:
+            kwargs["proxy"] = proxy_url
 
-            # Log request
-            debug_logger.log_request(
-                method="DELETE",
-                url=url,
-                headers=headers,
-                body=None,
-                files=None,
-                proxy=proxy_url
-            )
+        # Log request
+        debug_logger.log_request(
+            method="DELETE",
+            url=url,
+            headers=headers,
+            body=None,
+            files=None,
+            proxy=proxy_url
+        )
 
-            # Record start time
-            start_time = time.time()
+        # Record start time
+        start_time = time.time()
 
-            # Make DELETE request
-            response = await session.delete(url, **kwargs)
+        # Make DELETE request
+        response = await session.delete(url, **kwargs)
 
-            # Calculate duration
-            duration_ms = (time.time() - start_time) * 1000
+        # Calculate duration
+        duration_ms = (time.time() - start_time) * 1000
 
-            # Log response
-            debug_logger.log_response(
+        # Log response
+        debug_logger.log_response(
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            body=response.text if response.text else "No content",
+            duration_ms=duration_ms
+        )
+
+        # Check status (DELETE typically returns 204 No Content or 200 OK)
+        if response.status_code not in [200, 204]:
+            error_msg = f"Delete post failed: {response.status_code} - {response.text}"
+            debug_logger.log_error(
+                error_message=error_msg,
                 status_code=response.status_code,
-                headers=dict(response.headers),
-                body=response.text if response.text else "No content",
-                duration_ms=duration_ms
+                response_text=response.text
             )
+            raise Exception(error_msg)
 
-            # Check status (DELETE typically returns 204 No Content or 200 OK)
-            if response.status_code not in [200, 204]:
-                error_msg = f"Delete post failed: {response.status_code} - {response.text}"
-                debug_logger.log_error(
-                    error_message=error_msg,
-                    status_code=response.status_code,
-                    response_text=response.text
-                )
-                raise Exception(error_msg)
-
-            return True
+        return True
 
     async def get_watermark_free_url_custom(self, parse_url: str, parse_token: str, post_id: str) -> str:
         """Get watermark-free video URL from custom parse server
@@ -847,25 +883,37 @@ class SoraClient:
         proxy_url = await self.proxy_manager.get_proxy_url()
 
         headers = {
-            "Authorization": f"Bearer {token}"
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Origin": "https://sora.chatgpt.com",
+            "Pragma": "no-cache",
+            "Referer": "https://sora.chatgpt.com/",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
         }
 
-        async with AsyncSession() as session:
-            url = f"{self.base_url}/project_y/characters/{character_id}"
+        session = await self._get_session(token)
+        url = f"{self.base_url}/project_y/characters/{character_id}"
 
-            kwargs = {
-                "headers": headers,
-                "timeout": self.timeout,
-                "impersonate": "chrome"
-            }
+        kwargs = {
+            "headers": headers,
+            "timeout": self.timeout,
+        }
 
-            if proxy_url:
-                kwargs["proxy"] = proxy_url
+        if proxy_url:
+            kwargs["proxy"] = proxy_url
 
-            response = await session.delete(url, **kwargs)
-            if response.status_code not in [200, 204]:
-                raise Exception(f"Failed to delete character: {response.status_code}")
-            return True
+        response = await session.delete(url, **kwargs)
+        if response.status_code not in [200, 204]:
+            raise Exception(f"Failed to delete character: {response.status_code}")
+        return True
 
     async def remix_video(self, remix_target_id: str, prompt: str, token: str,
                          orientation: str = "portrait", n_frames: int = 450) -> str:
