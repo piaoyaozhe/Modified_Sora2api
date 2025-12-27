@@ -644,6 +644,51 @@ async def update_cloudflare_solver_config(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+# Cloudflare State endpoints
+@router.get("/api/cloudflare/state")
+async def get_cloudflare_state(token: str = Depends(verify_admin_token)) -> dict:
+    """Get current Cloudflare credentials state"""
+    from ..services.cloudflare_solver import get_cloudflare_state
+    cf_state = get_cloudflare_state()
+    return {
+        "success": True,
+        "state": cf_state.get_status()
+    }
+
+@router.post("/api/cloudflare/refresh")
+async def refresh_cloudflare_credentials(token: str = Depends(verify_admin_token)) -> dict:
+    """Manually refresh Cloudflare credentials"""
+    from ..services.cloudflare_solver import solve_cloudflare_challenge, get_cloudflare_state
+    
+    try:
+        result = await solve_cloudflare_challenge()
+        if result:
+            cf_state = get_cloudflare_state()
+            return {
+                "success": True,
+                "message": "Cloudflare credentials refreshed successfully",
+                "state": cf_state.get_status()
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to refresh Cloudflare credentials"
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/api/cloudflare/clear")
+async def clear_cloudflare_credentials(token: str = Depends(verify_admin_token)) -> dict:
+    """Clear Cloudflare credentials"""
+    from ..services.cloudflare_solver import get_cloudflare_state
+    cf_state = get_cloudflare_state()
+    cf_state.clear()
+    return {
+        "success": True,
+        "message": "Cloudflare credentials cleared",
+        "state": cf_state.get_status()
+    }
+
 # Statistics endpoints
 @router.get("/api/stats")
 async def get_stats(token: str = Depends(verify_admin_token)):
