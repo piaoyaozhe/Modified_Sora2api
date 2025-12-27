@@ -91,12 +91,17 @@ class CloudflareState:
         """获取当前状态信息"""
         with self._lock:
             is_valid = self._check_validity()
+            # 直接计算 remaining_seconds，避免调用属性导致死锁
+            remaining = 0
+            if is_valid and self._last_updated:
+                expires = self._last_updated + timedelta(seconds=self.CREDENTIAL_TTL)
+                remaining = max(0, int((expires - datetime.now()).total_seconds()))
             return {
                 "is_valid": is_valid,
                 "has_credentials": bool(self._cookies) and bool(self._user_agent),
                 "last_updated": self._last_updated.isoformat() if self._last_updated else None,
                 "expires_at": (self._last_updated + timedelta(seconds=self.CREDENTIAL_TTL)).isoformat() if self._last_updated else None,
-                "remaining_seconds": self.remaining_seconds if is_valid else 0,
+                "remaining_seconds": remaining,
                 "cookies_count": len(self._cookies),
                 "user_agent": self._user_agent[:50] + "..." if self._user_agent and len(self._user_agent) > 50 else self._user_agent,
             }
