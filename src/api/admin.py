@@ -336,6 +336,27 @@ async def test_token(token_id: int, token: str = Depends(verify_admin_token)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.delete("/api/tokens/batch-delete-disabled")
+async def batch_delete_disabled_tokens(token: str = Depends(verify_admin_token)):
+    """Delete all disabled tokens"""
+    try:
+        all_tokens = await db.get_all_tokens()
+        deleted_count = 0
+        
+        for t in all_tokens:
+            if not t.is_active:
+                await token_manager.delete_token(t.id)
+                deleted_count += 1
+        
+        return {
+            "success": True,
+            "message": f"已删除 {deleted_count} 个禁用账号",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"批量删除失败: {str(e)}")
+
+
 @router.delete("/api/tokens/{token_id}")
 async def delete_token(token_id: int, token: str = Depends(verify_admin_token)):
     """Delete a token"""
@@ -412,27 +433,6 @@ async def batch_disable_tokens(token: str = Depends(verify_admin_token)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"批量禁用失败: {str(e)}")
-
-
-@router.delete("/api/tokens/batch-delete-disabled")
-async def batch_delete_disabled_tokens(token: str = Depends(verify_admin_token)):
-    """Delete all disabled tokens"""
-    try:
-        all_tokens = await db.get_all_tokens()
-        deleted_count = 0
-        
-        for t in all_tokens:
-            if not t.is_active:
-                await token_manager.delete_token(t.id)
-                deleted_count += 1
-        
-        return {
-            "success": True,
-            "message": f"已删除 {deleted_count} 个禁用账号",
-            "deleted_count": deleted_count
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"批量删除失败: {str(e)}")
 
 
 @router.post("/api/tokens/import")

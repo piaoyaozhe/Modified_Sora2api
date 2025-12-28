@@ -133,35 +133,29 @@
                             </svg>
                             <span class="text-sm font-medium">新增</span>
                         </button>
-                        <button onclick="openBatchAddModal()" class="inline-flex items-center justify-center rounded-md bg-purple-600 text-white hover:bg-purple-700 h-8 px-3" title="批量新增Token">
-                            <svg class="h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="12" y1="5" x2="12" y2="19"/>
-                                <line x1="5" y1="12" x2="19" y2="12"/>
-                                <line x1="17" y1="8" x2="17" y2="16"/>
-                                <line x1="13" y1="12" x2="21" y2="12"/>
-                            </svg>
-                            <span class="text-sm font-medium">批量新增</span>
-                        </button>
-                        <button onclick="batchActivateUnsupported()" class="inline-flex items-center justify-center rounded-md bg-orange-600 text-white hover:bg-orange-700 h-8 px-3" title="一键激活所有不支持的Token">
-                            <svg class="h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-                            </svg>
-                            <span class="text-sm font-medium">一键激活</span>
-                        </button>
                         <!-- 批量测试下拉菜单 -->
                         <div class="relative inline-block">
-                            <button onclick="toggleBatchTestMenu()" class="inline-flex items-center justify-center rounded-md bg-cyan-600 text-white hover:bg-cyan-700 h-8 px-3" title="批量测试账号状态">
+                            <button onclick="toggleBatchTestMenu()" class="inline-flex items-center justify-center rounded-md bg-cyan-600 text-white hover:bg-cyan-700 h-8 px-3" title="批量操作">
                                 <svg class="h-4 w-4 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M9 11l3 3L22 4"/>
                                     <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
                                 </svg>
-                                <span class="text-sm font-medium">批量测试</span>
+                                <span class="text-sm font-medium">批量操作</span>
                                 <svg class="h-4 w-4 ml-1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="6 9 12 15 18 9"/>
                                 </svg>
                             </button>
                             <div id="batchTestMenu" class="hidden absolute right-0 mt-1 w-48 rounded-md shadow-lg bg-white border border-border z-50">
                                 <div class="py-1">
+                                    <button onclick="openBatchAddModal();$('batchTestMenu').classList.add('hidden')" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-purple-600">
+                                        批量新增
+                                        <p class="text-xs text-muted-foreground">批量添加多个Token</p>
+                                    </button>
+                                    <button onclick="batchActivateUnsupported()" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-orange-600">
+                                        一键激活
+                                        <p class="text-xs text-muted-foreground">激活不支持的Token</p>
+                                    </button>
+                                    <hr class="my-1 border-border">
                                     <button onclick="batchTestActiveTokens()" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-100">
                                         测试已启用账号
                                         <p class="text-xs text-muted-foreground">401自动禁用</p>
