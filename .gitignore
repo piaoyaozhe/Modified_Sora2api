@@ -42,7 +42,7 @@ data/*.sqlite
 # OS
 .DS_Store
 Thumbs.db
-
+test_concurrent.py
 # Logs
 *.log
 
