@@ -273,8 +273,6 @@ class Database:
         """
         db = await self._get_connection()
         try:
-            print("Checking database integrity and performing migrations...")
-
             # Check and add missing columns to tokens table
             if await self._table_exists(db, "tokens"):
                 columns_to_add = [
@@ -457,7 +455,6 @@ class Database:
                 print("  �?Created upload_logs table")
 
             await db.commit()
-            print("Database migration check completed.")
         finally:
             await db.close()
 
