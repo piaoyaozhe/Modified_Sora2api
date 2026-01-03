@@ -319,9 +319,10 @@ class TokenManager:
                                 print(f"✅ Sora2激活请求成功，重新获取邀请码...")
 
                                 # Retry getting invite code
-                                retry_response = await session.get(
+                                retry_response = await self._make_sora_request(
+                                    session, "GET",
                                     "https://sora.chatgpt.com/backend/project_y/invite/mine",
-                                    **kwargs
+                                    headers, proxy_url
                                 )
 
                                 if retry_response.status_code == 200:
