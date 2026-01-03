@@ -734,9 +734,9 @@ async def update_cloudflare_solver_config(
         )
         
         # Also update in-memory config for immediate effect
-        config.set_cloudflare_solver_enabled(request.solver_enabled)
+        config.set_cf_enabled(request.solver_enabled)
         if request.solver_api_url:
-            config.set_cloudflare_solver_api_url(request.solver_api_url)
+            config.set_cf_api_url(request.solver_api_url)
         
         return {"success": True, "message": "Cloudflare Solver configuration updated"}
     except Exception as e:
@@ -763,18 +763,18 @@ async def refresh_cloudflare_credentials(token: str = Depends(verify_admin_token
     from ..services.cloudflare_solver import solve_cloudflare_challenge, get_cloudflare_state
     from ..core.config import config
     
-    print(f"🔄 [API] Solver启用: {config.cloudflare_solver_enabled}, URL: {config.cloudflare_solver_api_url}", flush=True)
+    print(f"🔄 [API] Solver启用: {config.cf_enabled}, URL: {config.cf_api_url}", flush=True)
     sys.stdout.flush()
     
     # 检查是否启用了 Cloudflare Solver
-    if not config.cloudflare_solver_enabled:
+    if not config.cf_enabled:
         print("⚠️ [API] Solver未启用", flush=True)
         return {
             "success": False,
             "message": "Cloudflare Solver 未启用，请先在配置中启用"
         }
     
-    if not config.cloudflare_solver_api_url:
+    if not config.cf_api_url:
         print("⚠️ [API] Solver URL未配置", flush=True)
         return {
             "success": False,
