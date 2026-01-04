@@ -518,8 +518,8 @@ class SoraClient:
             "inpaint_items": inpaint_items
         }
 
-        # 生成请求需要添加 sentinel token，429 最多重试 10 次
-        result = await self._make_request("POST", "/video_gen", token, json_data=json_data, add_sentinel_token=True, max_retries=10)
+        # 生成请求需要添加 sentinel token，429 最多重试 3 次
+        result = await self._make_request("POST", "/video_gen", token, json_data=json_data, add_sentinel_token=True, max_retries=3)
         return result["id"]
     
     async def generate_video(self, prompt: str, token: str, orientation: str = "landscape",
@@ -559,8 +559,8 @@ class SoraClient:
         if style_id:
             json_data["style_id"] = style_id.lower()
 
-        # 生成请求需要添加 sentinel token，429 最多重试 10 次
-        result = await self._make_request("POST", "/nf/create", token, json_data=json_data, add_sentinel_token=True, max_retries=10)
+        # 生成请求需要添加 sentinel token，429 最多重试 3 次
+        result = await self._make_request("POST", "/nf/create", token, json_data=json_data, add_sentinel_token=True, max_retries=3)
         return result["id"]
     
     async def get_image_tasks(self, token: str, limit: int = 20) -> Dict[str, Any]:
