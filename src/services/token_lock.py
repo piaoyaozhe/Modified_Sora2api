@@ -30,7 +30,7 @@ class TokenLock:
                 self._redis_manager = get_redis_manager()
                 if not self._redis_manager._initialized:
                     await self._redis_manager.initialize()
-            except:
+            except Exception:
                 self._redis_manager = None
         return self._redis_manager
     

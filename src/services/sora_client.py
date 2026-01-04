@@ -215,7 +215,7 @@ class SoraClient:
             # Parse response
             try:
                 response_json = response.json()
-            except:
+            except (ValueError, TypeError):
                 response_json = None
 
             # Log response
@@ -307,21 +307,13 @@ class SoraClient:
                             await asyncio.sleep(wait_time)
                             attempt += 1
                             continue
-                
+
                 # Final error if all retries exhausted
                 if response.status_code == 429:
                     error_msg = f"速率限制超过 {max_retries} 次重试"
                     debug_logger.log_error(
                         error_message=error_msg,
                         status_code=429,
-                        response_text=response.text
-                    )
-                    raise Exception(error_msg)
-                elif response.status_code == 403:
-                    error_msg = f"403 禁止访问，超过 {max_retries} 次重试"
-                    debug_logger.log_error(
-                        error_message=error_msg,
-                        status_code=403,
                         response_text=response.text
                     )
                     raise Exception(error_msg)

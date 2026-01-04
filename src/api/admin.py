@@ -21,8 +21,58 @@ db: Database = None
 generation_handler = None
 concurrency_manager: ConcurrencyManager = None
 
-# Store active admin tokens (in production, use Redis or database)
-active_admin_tokens = set()
+# Admin token storage with expiration
+# Format: {token: expiry_timestamp}
+_admin_tokens: dict = {}
+_admin_tokens_lock = None  # Will be initialized on first use
+ADMIN_TOKEN_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+
+
+def _get_admin_tokens_lock():
+    """Get or create the admin tokens lock (lazy initialization for async context)"""
+    global _admin_tokens_lock
+    if _admin_tokens_lock is None:
+        import asyncio
+        _admin_tokens_lock = asyncio.Lock()
+    return _admin_tokens_lock
+
+
+def _cleanup_expired_tokens():
+    """Remove expired tokens from storage (non-async version for sync contexts)"""
+    import time
+    current_time = time.time()
+    expired = [token for token, expiry in _admin_tokens.items() if expiry < current_time]
+    for token in expired:
+        _admin_tokens.pop(token, None)
+
+
+def _add_admin_token(token: str):
+    """Add a new admin token with expiration"""
+    import time
+    _cleanup_expired_tokens()
+    _admin_tokens[token] = time.time() + ADMIN_TOKEN_TTL_SECONDS
+
+
+def _remove_admin_token(token: str):
+    """Remove an admin token"""
+    _admin_tokens.pop(token, None)
+
+
+def _is_valid_admin_token(token: str) -> bool:
+    """Check if an admin token is valid and not expired"""
+    import time
+    if token not in _admin_tokens:
+        return False
+    if _admin_tokens[token] < time.time():
+        _admin_tokens.pop(token, None)
+        return False
+    return True
+
+
+def _invalidate_all_admin_tokens():
+    """Invalidate all admin tokens (used when password changes)"""
+    _admin_tokens.clear()
+
 
 def set_dependencies(tm: TokenManager, pm: ProxyManager, database: Database, gh=None, cm: ConcurrencyManager = None):
     """Set dependencies"""
@@ -32,6 +82,7 @@ def set_dependencies(tm: TokenManager, pm: ProxyManager, database: Database, gh=
     db = database
     generation_handler = gh
     concurrency_manager = cm
+
 
 def verify_admin_token(authorization: str = Header(None)):
     """Verify admin token from Authorization header"""
@@ -43,7 +94,7 @@ def verify_admin_token(authorization: str = Header(None)):
     if authorization.startswith("Bearer "):
         token = authorization[7:]
 
-    if token not in active_admin_tokens:
+    if not _is_valid_admin_token(token):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     return token
@@ -171,8 +222,8 @@ async def login(request: LoginRequest):
     if AuthManager.verify_admin(request.username, request.password):
         # Generate simple token
         token = f"admin-{secrets.token_urlsafe(32)}"
-        # Store token in active tokens
-        active_admin_tokens.add(token)
+        # Store token with expiration
+        _add_admin_token(token)
         return LoginResponse(success=True, token=token, message="Login successful")
     else:
         return LoginResponse(success=False, message="Invalid credentials")
@@ -180,8 +231,8 @@ async def login(request: LoginRequest):
 @router.post("/api/logout")
 async def logout(token: str = Depends(verify_admin_token)):
     """Admin logout"""
-    # Remove token from active tokens
-    active_admin_tokens.discard(token)
+    # Remove token from storage
+    _remove_admin_token(token)
     return {"success": True, "message": "Logged out successfully"}
 
 # Token management endpoints
@@ -189,10 +240,14 @@ async def logout(token: str = Depends(verify_admin_token)):
 async def get_tokens(token: str = Depends(verify_admin_token)) -> List[dict]:
     """Get all tokens with statistics"""
     tokens = await token_manager.get_all_tokens()
+
+    # Batch fetch all token stats in a single query (N+1 optimization)
+    all_stats = await db.get_all_token_stats()
+
     result = []
 
     for token in tokens:
-        stats = await db.get_token_stats(token.id)
+        stats = all_stats.get(token.id)
         result.append({
             "id": token.id,
             "token": token.token,  # 完整的Access Token
@@ -696,7 +751,7 @@ async def update_admin_password(
             config.set_admin_username_from_db(request.username)
 
         # Invalidate all admin tokens (force re-login)
-        active_admin_tokens.clear()
+        _invalidate_all_admin_tokens()
 
         return {"success": True, "message": "Password updated successfully. Please login again."}
     except HTTPException:

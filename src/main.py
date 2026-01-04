@@ -12,6 +12,7 @@ from .core.database import Database
 from .core.db_pool import init_pool, close_pool
 from .core.db_adapter import init_adapter, close_adapter
 from .core.redis_manager import init_redis, close_redis
+from .core.dependencies import get_dependencies
 from .services.token_manager import TokenManager
 from .services.proxy_manager import ProxyManager
 from .services.load_balancer import LoadBalancer
@@ -50,7 +51,19 @@ load_balancer = LoadBalancer(token_manager, concurrency_manager)
 sora_client = SoraClient(proxy_manager)
 generation_handler = GenerationHandler(sora_client, token_manager, load_balancer, db, proxy_manager, concurrency_manager)
 
-# Set dependencies for route modules
+# Initialize dependency injection container
+deps = get_dependencies()
+deps.initialize(
+    db=db,
+    token_manager=token_manager,
+    proxy_manager=proxy_manager,
+    concurrency_manager=concurrency_manager,
+    load_balancer=load_balancer,
+    sora_client=sora_client,
+    generation_handler=generation_handler
+)
+
+# Set dependencies for route modules (legacy support, will be gradually migrated)
 api_routes.set_generation_handler(generation_handler)
 admin_routes.set_dependencies(token_manager, proxy_manager, db, generation_handler, concurrency_manager)
 public_routes.set_dependencies(token_manager, db, generation_handler)

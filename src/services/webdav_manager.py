@@ -202,7 +202,7 @@ class WebDAVManager:
             if temp_file and os.path.exists(temp_file.name):
                 try:
                     os.unlink(temp_file.name)
-                except:
+                except OSError:
                     pass
 
     async def delete_video(self, record_id: int) -> dict:

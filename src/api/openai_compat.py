@@ -351,7 +351,7 @@ def _extract_url_from_chunks(chunks_data: list) -> Optional[str]:
                         url_match = re.search(r'https?://[^\s\]"\']+', content)
                         if url_match:
                             return url_match.group(0)
-            except:
+            except Exception:
                 pass
     return None
 
@@ -424,7 +424,7 @@ def _extract_character_info(chunks_data: list) -> dict:
                         # Store message
                         if "character" in content.lower() or "cameo" in content.lower():
                             result["message"] = content
-            except:
+            except Exception:
                 pass
     return result
 
@@ -501,7 +501,7 @@ async def _process_video_generation(
         # Update task as failed
         try:
             await db.update_task(video_id, "failed", 0.0, error_message=str(e))
-        except:
+        except Exception:
             pass
     finally:
         # Clean up task reference
@@ -562,7 +562,7 @@ async def create_video(
             try:
                 width, height = map(int, size.lower().replace('*', 'x').split('x'))
                 orientation = "portrait" if height > width else "landscape"
-            except:
+            except (ValueError, AttributeError):
                 orientation = "landscape"
         
         # Default values
@@ -1014,7 +1014,7 @@ async def create_image(
                     final_model = "sora-image-portrait"
                 else:
                     final_model = "sora-image"
-            except:
+            except (ValueError, AttributeError):
                 pass
         
         # Validate model

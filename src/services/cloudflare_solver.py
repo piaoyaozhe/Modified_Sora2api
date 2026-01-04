@@ -170,7 +170,7 @@ async def is_cf_refreshing(token_id: Optional[int] = None, token: Optional[str] 
         try:
             from .redis_lock import RedisCFLock
             return await RedisCFLock.is_refreshing()
-        except:
+        except Exception:
             pass
     return _global_cf_refreshing
 

@@ -188,7 +188,9 @@ class TokenManager:
                     error_data = response.json()
                     error_msg = error_data.get("error", {}).get("message", response_text[:200])
                     raise ValueError(f"{response.status_code} - {error_msg}")
-                except:
+                except ValueError:
+                    raise
+                except Exception:
                     raise ValueError(f"{response.status_code} - {response_text[:500]}")
 
             return response.json()

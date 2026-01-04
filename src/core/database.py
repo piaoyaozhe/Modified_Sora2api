@@ -3,7 +3,7 @@ import aiosqlite
 import asyncio
 import json
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
 from pathlib import Path
 from contextlib import asynccontextmanager
 from .models import Token, TokenStats, Task, RequestLog, AdminConfig, ProxyConfig, WatermarkFreeConfig, CacheConfig, GenerationConfig, TokenRefreshConfig, CloudflareSolverConfig, Character, WebDAVConfig, VideoRecord, UploadLog
@@ -270,7 +270,7 @@ class Database:
                 cursor = await db.execute(f"PRAGMA table_info({table_name})")
                 columns = await cursor.fetchall()
                 return any(col[1] == column_name for col in columns)
-        except:
+        except Exception:
             return False
 
     async def _ensure_config_rows(self, db, config_dict: dict = None):
@@ -515,7 +515,7 @@ class Database:
             if await self._table_exists(db, table):
                 try:
                     await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-                except:
+                except Exception:
                     pass  # 列已存在，忽略
         
         # 创建新表
@@ -1119,6 +1119,27 @@ class Database:
                     data["today_date"] = str(data["today_date"])
                 return TokenStats(**data)
             return None
+
+    async def get_all_token_stats(self) -> Dict[int, TokenStats]:
+        """Get statistics for all tokens in a single query (optimized for N+1)
+
+        Returns:
+            Dictionary mapping token_id to TokenStats
+        """
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM token_stats")
+            rows = await cursor.fetchall()
+            result = {}
+            for row in rows:
+                data = dict(row)
+                # Convert date object to string for Pydantic compatibility
+                if data.get("today_date") and not isinstance(data["today_date"], str):
+                    data["today_date"] = str(data["today_date"])
+                token_id = data.get("token_id")
+                if token_id:
+                    result[token_id] = TokenStats(**data)
+            return result
 
     async def get_stats(self) -> dict:
         """Get aggregated statistics across all tokens"""

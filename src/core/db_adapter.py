@@ -194,7 +194,7 @@ class SQLiteAdapter(DatabaseAdapter):
         try:
             rows = await self.fetchall(f"PRAGMA table_info({table_name})")
             return any(row.get('name') == column_name for row in rows)
-        except:
+        except Exception:
             return False
     
     def get_placeholder(self) -> str:
