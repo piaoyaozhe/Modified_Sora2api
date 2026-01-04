@@ -10,6 +10,55 @@ from .models import Token, TokenStats, Task, RequestLog, AdminConfig, ProxyConfi
 from .db_pool import get_db_connection
 from .config import config
 
+
+class _MySQLConnectionWrapper:
+    """Wrapper to make MySQL cursor behave like SQLite connection"""
+    
+    def __init__(self, conn, cursor, pool=None):
+        self._conn = conn
+        self._cursor = cursor
+        self._pool = pool
+        self.row_factory = None
+    
+    async def execute(self, sql: str, params: tuple = None):
+        # Convert SQLite placeholders to MySQL
+        sql = sql.replace("?", "%s")
+        # Handle SQLite-specific syntax
+        sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "INT AUTO_INCREMENT PRIMARY KEY")
+        sql = sql.replace("AUTOINCREMENT", "AUTO_INCREMENT")
+        sql = sql.replace("INSERT OR IGNORE", "INSERT IGNORE")
+        
+        if params:
+            await self._cursor.execute(sql, params)
+        else:
+            await self._cursor.execute(sql)
+        return self._cursor
+    
+    async def executemany(self, sql: str, params_list: list):
+        sql = sql.replace("?", "%s")
+        await self._cursor.executemany(sql, params_list)
+    
+    async def commit(self):
+        await self._conn.commit()
+    
+    async def close(self):
+        await self._cursor.close()
+        if self._pool:
+            self._pool.release(self._conn)
+        else:
+            self._conn.close()
+    
+    async def fetchone(self):
+        return await self._cursor.fetchone()
+    
+    async def fetchall(self):
+        return await self._cursor.fetchall()
+    
+    @property
+    def lastrowid(self):
+        return self._cursor.lastrowid
+
+
 class Database:
     """Database manager with support for SQLite and MySQL"""
 
@@ -107,57 +156,6 @@ class Database:
                 await conn.execute("PRAGMA query_only=ON")
             conn.row_factory = aiosqlite.Row
             return conn
-
-
-class _MySQLConnectionWrapper:
-    """Wrapper to make MySQL cursor behave like SQLite connection"""
-    
-    def __init__(self, conn, cursor, pool=None):
-        self._conn = conn
-        self._cursor = cursor
-        self._pool = pool
-        self.row_factory = None
-    
-    async def execute(self, sql: str, params: tuple = None):
-        # Convert SQLite placeholders to MySQL
-        sql = sql.replace("?", "%s")
-        # Handle SQLite-specific syntax
-        sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "INT AUTO_INCREMENT PRIMARY KEY")
-        sql = sql.replace("AUTOINCREMENT", "AUTO_INCREMENT")
-        sql = sql.replace("INSERT OR IGNORE", "INSERT IGNORE")
-        
-        if params:
-            await self._cursor.execute(sql, params)
-        else:
-            await self._cursor.execute(sql)
-        return self._cursor
-    
-    async def executemany(self, sql: str, params_list: list):
-        sql = sql.replace("?", "%s")
-        await self._cursor.executemany(sql, params_list)
-    
-    async def commit(self):
-        await self._conn.commit()
-    
-    async def close(self):
-        await self._cursor.close()
-        if self._pool:
-            self._pool.release(self._conn)
-        else:
-            self._conn.close()
-    
-    async def fetchone(self):
-        return await self._cursor.fetchone()
-    
-    async def fetchall(self):
-        return await self._cursor.fetchall()
-    
-    @property
-    def lastrowid(self):
-        return self._cursor.lastrowid
-
-
-# Continue with the rest of the Database class methods...
 
     async def _execute_with_retry(self, operation, max_retries: int = 5):
         """Execute database operation with retry logic for locked database
