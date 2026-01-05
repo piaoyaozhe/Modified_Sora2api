@@ -449,15 +449,18 @@ async def _process_video_generation_v2(video_id: str):
     
     task_info = _video_tasks.get(video_id)
     if not task_info or not isinstance(task_info, dict):
+        print(f"[VideoTask] {video_id}: task_info not found in _video_tasks")
         return
     
     db = Database()
     
     try:
         task_info["status"] = "in_progress"
+        print(f"[VideoTask] {video_id}: Starting generation...")
         
         # Generate video
         result_url = None
+        last_chunk = None
         async for chunk in generation_handler.handle_generation(
             model=task_info["internal_model"],
             prompt=task_info["prompt"],
@@ -467,18 +470,62 @@ async def _process_video_generation_v2(video_id: str):
             style_id=task_info.get("style_id")
         ):
             if isinstance(chunk, str):
+                last_chunk = chunk
                 # Extract progress percentage if present
                 match = re.search(r'(\d+)%', chunk)
                 if match:
-                    task_info["progress"] = int(match.group(1))
+                    progress = int(match.group(1))
+                    task_info["progress"] = progress
                 
-                # Check for result URL in chunk
-                url_match = re.search(r'https?://[^\s\]"\'<>]+\.mp4[^\s\]"\'<>]*', chunk)
-                if url_match:
-                    result_url = url_match.group(0).rstrip('\\n')
+                # Check for result URL in chunk - try multiple patterns
+                # Pattern 1: URL in video tag (e.g., <video src='url'>)
+                video_src_match = re.search(r"<video[^>]+src=['\"]([^'\"]+)['\"]", chunk)
+                if video_src_match:
+                    result_url = video_src_match.group(1)
+                    print(f"[VideoTask] {video_id}: Found URL in video tag: {result_url[:100]}...")
+                
+                # Pattern 2: Direct .mp4 URL (more permissive)
+                if not result_url:
+                    url_match = re.search(r'(https?://[^\s\]"<>]+\.mp4[^\s\]"<>]*)', chunk)
+                    if url_match:
+                        result_url = url_match.group(1).rstrip("'").rstrip('"')
+                        print(f"[VideoTask] {video_id}: Found MP4 URL: {result_url[:100]}...")
+                
+                # Pattern 3: URL in JSON content field
+                if not result_url:
+                    try:
+                        # Try to parse as SSE data
+                        if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
+                            data = json.loads(chunk[6:])
+                            choices = data.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    # Check for video tag in content
+                                    video_match = re.search(r"<video[^>]+src=['\"]([^'\"]+)['\"]", content)
+                                    if video_match:
+                                        result_url = video_match.group(1)
+                                        print(f"[VideoTask] {video_id}: Found URL in content video tag: {result_url[:100]}...")
+                                    else:
+                                        # Try to parse content as JSON
+                                        try:
+                                            content_data = json.loads(content)
+                                            if isinstance(content_data, dict):
+                                                url = content_data.get("url")
+                                                if url and ("mp4" in url or "video" in url):
+                                                    result_url = url
+                                                    print(f"[VideoTask] {video_id}: Found URL in content JSON: {result_url[:100]}...")
+                                        except:
+                                            pass
+                    except:
+                        pass
+        
+        print(f"[VideoTask] {video_id}: Generation loop finished. result_url={result_url is not None}")
         
         # Try to get result from database if not found in stream
         if not result_url:
+            print(f"[VideoTask] {video_id}: No URL found in stream, checking database...")
             all_tasks = await db.get_recent_tasks(limit=10)
             for db_task in all_tasks:
                 if db_task.prompt == task_info["prompt"] and db_task.status == "completed":
@@ -489,9 +536,11 @@ async def _process_video_generation_v2(video_id: str):
                                 result_url = urls[0] if isinstance(urls, list) else urls
                         except:
                             result_url = db_task.result_urls
+                        print(f"[VideoTask] {video_id}: Found URL in database: {result_url[:100] if result_url else 'None'}...")
                         break
         
         # Mark as completed (use new-api-main compatible status)
+        print(f"[VideoTask] {video_id}: Marking as completed. result_url={result_url is not None}")
         task_info["status"] = "completed"
         task_info["progress"] = 100
         task_info["completed_at"] = int(time.time())  # Unix timestamp in seconds
@@ -502,8 +551,13 @@ async def _process_video_generation_v2(video_id: str):
             await db.update_task(video_id, "completed", 100.0, result_urls=result_url)
         else:
             await db.update_task(video_id, "completed", 100.0)
+        
+        print(f"[VideoTask] {video_id}: Task completed successfully. Status in memory: {task_info['status']}")
     
     except Exception as e:
+        print(f"[VideoTask] {video_id}: Exception occurred: {str(e)}")
+        import traceback
+        traceback.print_exc()
         task_info["status"] = "failed"
         task_info["error"] = {
             "message": str(e),
@@ -778,6 +832,9 @@ async def get_video(
     # First check in-memory tasks
     task_info = _video_tasks.get(video_id)
     if task_info and isinstance(task_info, dict):
+        # Debug log
+        print(f"[GetVideo] {video_id}: Found in memory. status={task_info['status']}, progress={task_info['progress']}")
+        
         # Build response (new-api-main compatible format)
         response = {
             "id": task_info["id"],
