@@ -678,12 +678,8 @@ async def create_video(
         except:
             orient = "portrait"
         
-        # Map to internal model
-        is_pro = model == "sora-2-pro"
-        if is_pro:
-            final_model = f"sora2pro-{orient}-{duration}s"
-        else:
-            final_model = f"sora2-{orient}-{duration}s"
+        # Map to internal model (sora-video-{orientation}-{duration}s format)
+        final_model = f"sora-video-{orient}-{duration}s"
         
         # Process reference image
         image_data = None
