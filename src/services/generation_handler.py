@@ -469,6 +469,7 @@ class GenerationHandler:
                 raise Exception(f"Failed to acquire concurrency slot for token {token_obj.id}")
 
         task_id = None
+        log_id = None  # Log ID for updating later
         is_first_chunk = True  # Track if this is the first chunk
 
         try:
@@ -564,6 +565,14 @@ class GenerationHandler:
             )
             await self.db.create_task(task)
             
+            # Log request start (in-progress)
+            log_id = await self._log_request_start(
+                token_obj.id,
+                task_id,
+                f"generate_{model_config['type']}",
+                {"model": model, "prompt": prompt, "has_image": image is not None}
+            )
+            
             # Record usage
             await self.token_manager.record_usage(token_obj.id, is_video=is_video)
             
@@ -585,12 +594,10 @@ class GenerationHandler:
             if is_video and self.concurrency_manager:
                 await self.concurrency_manager.release_video(token_obj.id)
 
-            # Log successful request
+            # Update log with success
             duration = time.time() - start_time
-            await self._log_request(
-                token_obj.id,
-                f"generate_{model_config['type']}",
-                {"model": model, "prompt": prompt, "has_image": image is not None},
+            await self._log_request_complete(
+                log_id,
                 {"task_id": task_id, "status": "success"},
                 200,
                 duration
@@ -612,16 +619,25 @@ class GenerationHandler:
             if token_obj:
                 await self.token_manager.record_error(token_obj.id)
 
-            # Log failed request
+            # Update log with failure
             duration = time.time() - start_time
-            await self._log_request(
-                token_obj.id if token_obj else None,
-                f"generate_{model_config['type'] if model_config else 'unknown'}",
-                {"model": model, "prompt": prompt, "has_image": image is not None},
-                {"error": str(e)},
-                500,
-                duration
-            )
+            if 'log_id' in dir():
+                await self._log_request_complete(
+                    log_id,
+                    {"error": str(e)},
+                    500,
+                    duration
+                )
+            else:
+                # Fallback if log_id wasn't created (e.g., error before task creation)
+                await self._log_request(
+                    token_obj.id if token_obj else None,
+                    f"generate_{model_config['type'] if model_config else 'unknown'}",
+                    {"model": model, "prompt": prompt, "has_image": image is not None},
+                    {"error": str(e)},
+                    500,
+                    duration
+                )
             raise e
     
     async def _poll_task_result(self, task_id: str, token: str, is_video: bool,
@@ -1368,10 +1384,49 @@ class GenerationHandler:
         }
         return json.dumps(response)
 
+    async def _log_request_start(self, token_id: Optional[int], task_id: str, operation: str,
+                                 request_data: Dict[str, Any]) -> Optional[int]:
+        """Log request start to database (in-progress status)
+        
+        Returns the log ID for later update.
+        """
+        try:
+            log = RequestLog(
+                token_id=token_id,
+                task_id=task_id,
+                operation=operation,
+                request_body=json.dumps(request_data),
+                response_body=None,
+                status_code=-1,  # -1 indicates in-progress
+                duration=-1.0    # -1 indicates not completed
+            )
+            log_id = await self.db.log_request(log)
+            return log_id
+        except Exception as e:
+            # Don't fail the request if logging fails
+            print(f"Failed to log request start: {e}")
+            return None
+
+    async def _log_request_complete(self, log_id: Optional[int], response_data: Dict[str, Any],
+                                    status_code: int, duration: float):
+        """Update request log with completion data"""
+        if log_id is None:
+            return
+        try:
+            await self.db.update_request_log(
+                log_id,
+                response_body=json.dumps(response_data),
+                status_code=status_code,
+                duration=duration
+            )
+        except Exception as e:
+            # Don't fail the request if logging fails
+            print(f"Failed to update request log: {e}")
+
     async def _log_request(self, token_id: Optional[int], operation: str,
                           request_data: Dict[str, Any], response_data: Dict[str, Any],
                           status_code: int, duration: float):
-        """Log request to database"""
+        """Log request to database (legacy method for backward compatibility)"""
         try:
             log = RequestLog(
                 token_id=token_id,
