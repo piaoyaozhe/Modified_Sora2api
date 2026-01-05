@@ -431,86 +431,19 @@ def _extract_character_info(chunks_data: list) -> dict:
 
 # ============================================================
 # /v1/videos - Video Generation (OpenAI Sora Compatible)
+# Compatible with new-api-main sora2 relay format
 # ============================================================
 
 # Background task storage for async video generation
 import asyncio
-_video_tasks: dict = {}  # video_id -> asyncio.Task
-
-
-async def _process_video_generation(
-    video_id: str,
-    final_model: str,
-    prompt: str,
-    image_data: Optional[str],
-    remix_target_id: Optional[str],
-    style_id: Optional[str],
-    size: str,
-    duration: str,
-    model_display: str
-):
-    """Background task to process video generation"""
-    from ..core.database import Database
-    from ..core.models import Task
-    
-    db = Database()
-    
-    try:
-        # Generate video
-        chunks = []
-        last_progress = 0
-        async for chunk in generation_handler.handle_generation(
-            model=final_model,
-            prompt=prompt,
-            image=image_data,
-            remix_target_id=remix_target_id,
-            stream=True,
-            style_id=style_id
-        ):
-            chunks.append(chunk)
-            # Try to extract progress from chunk
-            if chunk.startswith("data: ") and chunk != "data: [DONE]\n\n":
-                try:
-                    data = json.loads(chunk[6:])
-                    choices = data.get("choices", [])
-                    if choices:
-                        delta = choices[0].get("delta", {})
-                        reasoning = delta.get("reasoning_content", {})
-                        if isinstance(reasoning, dict):
-                            progress = reasoning.get("progress")
-                            # Only update if progress is a valid number and greater than last
-                            if progress is not None and isinstance(progress, (int, float)) and progress > last_progress:
-                                last_progress = int(progress)
-                                # Update progress in database
-                                await db.update_task(video_id, "processing", float(last_progress))
-                except Exception:
-                    pass
-        
-        # Extract result
-        video_info = _extract_video_info_from_chunks(chunks)
-        url = video_info.get("url") or _extract_url_from_chunks(chunks)
-        
-        if url:
-            # Update task as completed
-            await db.update_task(video_id, "completed", 100.0, result_urls=url)
-        else:
-            # Update task as failed
-            await db.update_task(video_id, "failed", 0.0, error_message="Video generation failed - no URL returned")
-    
-    except Exception as e:
-        # Update task as failed
-        try:
-            await db.update_task(video_id, "failed", 0.0, error_message=str(e))
-        except Exception:
-            pass
-    finally:
-        # Clean up task reference
-        if video_id in _video_tasks:
-            del _video_tasks[video_id]
+_video_tasks: dict = {}  # video_id -> task_info dict
 
 
 async def _process_video_generation_v2(video_id: str):
-    """Background task to process video generation (v2 - updates in-memory task)"""
+    """Background task to process video generation (updates in-memory task)
+    
+    Compatible with new-api-main sora relay format.
+    """
     import re
     from ..core.database import Database
     
@@ -558,10 +491,10 @@ async def _process_video_generation_v2(video_id: str):
                             result_url = db_task.result_urls
                         break
         
-        # Mark as completed
+        # Mark as completed (use new-api-main compatible status)
         task_info["status"] = "completed"
         task_info["progress"] = 100
-        task_info["completed_at"] = int(time.time() * 1000)
+        task_info["completed_at"] = int(time.time())  # Unix timestamp in seconds
         task_info["result_url"] = result_url
         
         # Update database
@@ -597,18 +530,33 @@ async def create_video(
     async_mode: Optional[bool] = Form(True, description="Async mode: return immediately with task ID (default: true)"),
     api_key: str = Depends(verify_api_key_header)
 ):
-    """Create video generation (Sora Compatible)
+    """Create video generation (Sora Compatible - new-api-main format)
     
     Supports both multipart/form-data and JSON body.
+    Compatible with new-api-main sora2 relay format.
     
     **Async Mode (default):**
-    - Returns immediately with video_id and status="queued"
-    - Poll GET /v1/videos/{video_id} to check status
-    - Download via GET /v1/videos/{video_id}/content when completed
+    - Returns immediately with id and status="in_progress"
+    - Poll GET /v1/videos/{id} to check status
+    - Download via GET /v1/videos/{id}/content when completed
     
     **Sync Mode (async_mode=false):**
     - Waits for generation to complete
     - Returns final result with status="completed"
+    
+    **Response format (new-api-main compatible):**
+    ```json
+    {
+        "id": "sora-2-abc123def456",
+        "object": "video",
+        "model": "sora-2",
+        "status": "in_progress",
+        "progress": 0,
+        "created_at": 1702388400,
+        "seconds": "10",
+        "size": "1280x720"
+    }
+    ```
     """
     try:
         # Check if JSON body
@@ -691,7 +639,7 @@ async def create_video(
             if "base64," in image_data:
                 image_data = image_data.split("base64,", 1)[1]
         
-        # Generate task ID
+        # Generate task ID (new-api-main compatible format)
         video_id = f"{model}-{uuid.uuid4().hex[:12]}"
         created_at = int(time.time())  # Unix timestamp in seconds
         
@@ -708,7 +656,7 @@ async def create_video(
                 token_id=0,  # Will be set by generation handler
                 model=final_model,
                 prompt=prompt,
-                status="processing",
+                status="in_progress",  # new-api-main uses in_progress
                 progress=0.0
             )
             await db.create_task(task)
@@ -724,24 +672,26 @@ async def create_video(
                 "image": image_data,
                 "remix_target_id": remix_target_id,
                 "style_id": style_id,
-                "status": "processing",
+                "status": "in_progress",  # new-api-main compatible status
                 "progress": 0,
                 "created_at": created_at,
+                "completed_at": None,
+                "expires_at": None,
                 "result_url": None,
                 "error": None,
             }
             
             # Start background task
-            bg_task = asyncio.create_task(_process_video_generation_v2(video_id))
+            asyncio.create_task(_process_video_generation_v2(video_id))
             
-            # Return immediately with processing status
+            # Return immediately with in_progress status (new-api-main compatible)
             return JSONResponse(
                 status_code=201,
                 content={
                     "id": video_id,
                     "object": "video",
                     "model": model,
-                    "status": "processing",
+                    "status": "in_progress",
                     "progress": 0,
                     "created_at": created_at,
                     "seconds": str(duration),
@@ -766,19 +716,19 @@ async def create_video(
         url = video_info.get("url") or _extract_url_from_chunks(chunks)
         
         if url:
+            # Return completed response (new-api-main compatible)
             return JSONResponse(
                 status_code=201,
                 content={
                     "id": video_id,
                     "object": "video",
                     "model": model,
-                    "status": "succeeded",
+                    "status": "completed",
                     "progress": 100,
                     "created_at": created_at,
                     "completed_at": int(time.time()),
                     "seconds": str(duration),
                     "size": size,
-                    "url": url,
                 }
             )
         else:
@@ -789,7 +739,12 @@ async def create_video(
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={"error": {"message": str(e), "type": "server_error"}}
+            content={
+                "error": {
+                    "message": str(e),
+                    "code": "server_error"
+                }
+            }
         )
 
 
@@ -798,39 +753,35 @@ async def get_video(
     video_id: str,
     api_key: str = Depends(verify_api_key_header)
 ):
-    """Get video task status (Sora Compatible)
+    """Get video task status (new-api-main compatible)
     
     Returns the current status of a video generation task.
+    Compatible with new-api-main sora2 relay format.
     
-    **Response fields:**
+    **Response fields (new-api-main compatible):**
     - id: Video task ID
     - object: "video"
     - model: Model used for generation
-    - status: "queued", "in_progress", "completed", or "failed"
+    - status: "queued", "pending", "in_progress", "processing", "completed", "failed", "cancelled"
     - progress: Progress percentage (0-100)
-    - created_at: Unix timestamp (milliseconds)
-    - completed_at: Unix timestamp when completed (milliseconds)
+    - created_at: Unix timestamp (seconds)
+    - completed_at: Unix timestamp when completed (seconds, optional)
+    - expires_at: Unix timestamp when expires (seconds, optional)
     - seconds: Video duration
     - size: Video resolution
-    - error: Error details (only when status="failed")
+    - remixed_from_video_id: Remix source video ID (optional)
+    - error: Error details {message, code} (only when status="failed")
+    - metadata: Extended metadata (optional)
     """
     # First check in-memory tasks
     task_info = _video_tasks.get(video_id)
     if task_info and isinstance(task_info, dict):
-        # Map internal status to OpenAI Sora API status
-        status = task_info["status"]
-        if status == "queued":
-            status = "processing"
-        elif status == "in_progress":
-            status = "processing"
-        elif status == "completed":
-            status = "succeeded"
-        
+        # Build response (new-api-main compatible format)
         response = {
             "id": task_info["id"],
             "object": "video",
             "model": task_info["model"],
-            "status": status,
+            "status": task_info["status"],  # Already using new-api-main compatible status
             "progress": task_info["progress"],
             "created_at": task_info["created_at"],
             "seconds": task_info["seconds"],
@@ -840,8 +791,11 @@ async def get_video(
         if task_info.get("completed_at"):
             response["completed_at"] = task_info["completed_at"]
         
-        if task_info.get("result_url"):
-            response["url"] = task_info["result_url"]
+        if task_info.get("expires_at"):
+            response["expires_at"] = task_info["expires_at"]
+        
+        if task_info.get("remix_target_id"):
+            response["remixed_from_video_id"] = task_info["remix_target_id"]
         
         if task_info.get("error"):
             response["error"] = task_info["error"]
@@ -858,18 +812,20 @@ async def get_video(
     
     created_at = int(task.created_at.timestamp()) if task.created_at else int(time.time())
     
-    # Map internal status to OpenAI Sora API status
+    # Map internal status to new-api-main compatible status
     status = task.status
     if status == "queued":
-        status = "processing"
-    elif status == "in_progress":
-        status = "processing"
+        status = "queued"
+    elif status == "processing":
+        status = "in_progress"
     elif status == "completed":
-        status = "succeeded"
+        status = "completed"
+    elif status == "failed":
+        status = "failed"
     
     # Extract model info from task
     model = "sora-2"
-    if "sora2pro" in task.model:
+    if "sora2pro" in task.model or "sora-2-pro" in task.model:
         model = "sora-2-pro"
     
     # Extract duration and size
@@ -900,7 +856,7 @@ async def get_video(
     if task.error_message:
         response["error"] = {
             "message": task.error_message,
-            "type": "server_error"
+            "code": "generation_failed"
         }
     
     return JSONResponse(content=response)
@@ -914,6 +870,7 @@ async def get_video_content(
     """Get video content (redirect to actual video URL)
     
     Redirects to the video URL for download when the task is completed.
+    Compatible with new-api-main sora2 relay format.
     """
     from fastapi.responses import RedirectResponse
     
@@ -921,11 +878,27 @@ async def get_video_content(
     task_info = _video_tasks.get(video_id)
     if task_info and isinstance(task_info, dict):
         if task_info["status"] != "completed":
-            raise HTTPException(status_code=400, detail=f"Task not completed. Current status: {task_info['status']}")
+            raise HTTPException(
+                status_code=400, 
+                detail={
+                    "error": {
+                        "message": f"Task not completed. Current status: {task_info['status']}",
+                        "code": "task_not_completed"
+                    }
+                }
+            )
         
         result_url = task_info.get("result_url")
         if not result_url:
-            raise HTTPException(status_code=404, detail="Video content not available")
+            raise HTTPException(
+                status_code=404, 
+                detail={
+                    "error": {
+                        "message": "Video content not available",
+                        "code": "content_not_found"
+                    }
+                }
+            )
         
         return RedirectResponse(url=result_url)
     
@@ -935,18 +908,234 @@ async def get_video_content(
     
     task = await db.get_task(video_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(
+            status_code=404, 
+            detail={
+                "error": {
+                    "message": "Task not found",
+                    "code": "task_not_found"
+                }
+            }
+        )
     
     if task.status == "failed":
         raise HTTPException(
             status_code=400, 
-            detail=f"Video generation failed: {task.error_message or 'Unknown error'}"
+            detail={
+                "error": {
+                    "message": f"Video generation failed: {task.error_message or 'Unknown error'}",
+                    "code": "generation_failed"
+                }
+            }
         )
     
     if task.status != "completed" or not task.result_urls:
-        raise HTTPException(status_code=400, detail=f"Task not completed. Current status: {task.status}")
+        raise HTTPException(
+            status_code=400, 
+            detail={
+                "error": {
+                    "message": f"Task not completed. Current status: {task.status}",
+                    "code": "task_not_completed"
+                }
+            }
+        )
     
     return RedirectResponse(url=task.result_urls)
+
+
+# ============================================================
+# /v1/videos/{video_id}/remix - Video Remix (new-api-main compatible)
+# ============================================================
+
+@router.post("/v1/videos/{video_id}/remix", status_code=201)
+async def remix_video(
+    video_id: str,
+    request: Request,
+    prompt: str = Form(None, description="Remix prompt"),
+    model: str = Form("sora-2", description="Model ID: sora-2 or sora-2-pro"),
+    seconds: Optional[str] = Form(None, description="Duration: '10' or '15'"),
+    size: Optional[str] = Form(None, description="Output resolution"),
+    style_id: Optional[str] = Form(None, description="Video style"),
+    async_mode: Optional[bool] = Form(True, description="Async mode"),
+    api_key: str = Depends(verify_api_key_header)
+):
+    """Remix an existing video (new-api-main compatible)
+    
+    Creates a new video based on an existing video with a new prompt.
+    Compatible with new-api-main sora2 relay format.
+    
+    **Request:**
+    - video_id: Source video ID to remix from
+    - prompt: New prompt for the remix
+    
+    **Response format (new-api-main compatible):**
+    ```json
+    {
+        "id": "sora-2-abc123def456",
+        "object": "video",
+        "model": "sora-2",
+        "status": "in_progress",
+        "progress": 0,
+        "created_at": 1702388400,
+        "remixed_from_video_id": "original-video-id"
+    }
+    ```
+    """
+    try:
+        # Check if JSON body
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            body = await request.json()
+            prompt = body.get("prompt", prompt)
+            model = body.get("model", model)
+            seconds = body.get("seconds", seconds)
+            size = body.get("size", size)
+            style_id = body.get("style_id", style_id)
+            async_mode = body.get("async_mode", async_mode)
+        
+        if not prompt:
+            raise HTTPException(
+                status_code=400, 
+                detail={
+                    "error": {
+                        "message": "prompt is required",
+                        "code": "invalid_request"
+                    }
+                }
+            )
+        
+        # Normalize model name
+        if model in ["sora", "sora-2", "sora2"]:
+            model = "sora-2"
+        elif model in ["sora-2-pro", "sora2-pro", "sora2pro"]:
+            model = "sora-2-pro"
+        
+        # Default size
+        if not size:
+            size = "1280x720"
+        
+        # Parse seconds
+        duration = 15
+        if seconds:
+            try:
+                duration = int(seconds)
+            except:
+                duration = 15
+        
+        # Determine orientation from size
+        try:
+            width, height = map(int, size.split('x'))
+            orient = "landscape" if width > height else "portrait"
+        except:
+            orient = "landscape"
+        
+        # Map to internal model
+        final_model = f"sora-video-{orient}-{duration}s"
+        
+        # Generate new task ID
+        new_video_id = f"{model}-{uuid.uuid4().hex[:12]}"
+        created_at = int(time.time())
+        
+        if async_mode:
+            from ..core.database import Database
+            from ..core.models import Task
+            
+            db = Database()
+            
+            # Create task in database
+            task = Task(
+                task_id=new_video_id,
+                token_id=0,
+                model=final_model,
+                prompt=prompt,
+                status="in_progress",
+                progress=0.0
+            )
+            await db.create_task(task)
+            
+            # Store task info with remix reference
+            _video_tasks[new_video_id] = {
+                "id": new_video_id,
+                "model": model,
+                "internal_model": final_model,
+                "prompt": prompt,
+                "seconds": str(duration),
+                "size": size,
+                "image": None,
+                "remix_target_id": video_id,  # Original video ID
+                "style_id": style_id,
+                "status": "in_progress",
+                "progress": 0,
+                "created_at": created_at,
+                "completed_at": None,
+                "expires_at": None,
+                "result_url": None,
+                "error": None,
+            }
+            
+            # Start background task
+            asyncio.create_task(_process_video_generation_v2(new_video_id))
+            
+            return JSONResponse(
+                status_code=201,
+                content={
+                    "id": new_video_id,
+                    "object": "video",
+                    "model": model,
+                    "status": "in_progress",
+                    "progress": 0,
+                    "created_at": created_at,
+                    "seconds": str(duration),
+                    "size": size,
+                    "remixed_from_video_id": video_id,
+                }
+            )
+        
+        # Sync mode
+        chunks = []
+        async for chunk in generation_handler.handle_generation(
+            model=final_model,
+            prompt=prompt,
+            remix_target_id=video_id,
+            stream=True,
+            style_id=style_id
+        ):
+            chunks.append(chunk)
+        
+        video_info = _extract_video_info_from_chunks(chunks)
+        url = video_info.get("url") or _extract_url_from_chunks(chunks)
+        
+        if url:
+            return JSONResponse(
+                status_code=201,
+                content={
+                    "id": new_video_id,
+                    "object": "video",
+                    "model": model,
+                    "status": "completed",
+                    "progress": 100,
+                    "created_at": created_at,
+                    "completed_at": int(time.time()),
+                    "seconds": str(duration),
+                    "size": size,
+                    "remixed_from_video_id": video_id,
+                }
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Video remix failed")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "message": str(e),
+                    "code": "server_error"
+                }
+            }
+        )
 
 
 # ============================================================

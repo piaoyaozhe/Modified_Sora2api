@@ -4,6 +4,8 @@
 
 Sora2API 是一个兼容 OpenAI API 格式的 Sora 视频/图片生成服务。本文档详细描述了所有 v1 版本的 API 接口。
 
+**✅ 已兼容 [new-api](https://github.com/Calcium-Ion/new-api) sora2 渠道对接格式**
+
 ## 基础信息
 
 - **Base URL**: `http://your-server:port`
@@ -25,7 +27,7 @@ Authorization: Bearer your-api-key
 
 1. [模型接口](#1-模型接口)
 2. [Chat Completions 接口](#2-chat-completions-接口)
-3. [视频生成接口](#3-视频生成接口)
+3. [视频生成接口](#3-视频生成接口) ⭐ new-api 兼容
 4. [图片生成接口](#4-图片生成接口)
 5. [角色创建接口](#5-角色创建接口)
 6. [公共数据接口](#6-公共数据接口)
@@ -210,9 +212,11 @@ data: [DONE]
 
 ## 3. 视频生成接口
 
+> **注意**: 本接口已兼容 new-api-main sora2 relay 格式
+
 ### POST /v1/videos
 
-创建视频生成任务（兼容 OpenAI Sora API）。
+创建视频生成任务（兼容 new-api-main sora2 格式）。
 
 **请求参数:**
 
@@ -227,6 +231,7 @@ data: [DONE]
 | `input_reference` | file | 否 | 参考图片文件（multipart/form-data） |
 | `input_image` | string | 否 | Base64 编码的参考图片 |
 | `remix_target_id` | string | 否 | Remix 目标视频 ID |
+| `metadata` | string | 否 | 扩展参数（JSON 字符串） |
 | `async_mode` | boolean | 否 | 异步模式，默认 true |
 
 **请求示例 (JSON):**
@@ -252,13 +257,13 @@ curl -X POST "http://your-server/v1/videos" \
   -F "input_reference=@reference.jpg;type=image/jpeg"
 ```
 
-**异步模式响应 (status: 201):**
+**异步模式响应 (status: 201, new-api-main 兼容格式):**
 ```json
 {
   "id": "sora-2-abc123def456",
   "object": "video",
   "model": "sora-2",
-  "status": "processing",
+  "status": "in_progress",
   "progress": 0,
   "created_at": 1702388400,
   "seconds": "10",
@@ -272,13 +277,12 @@ curl -X POST "http://your-server/v1/videos" \
   "id": "sora-2-abc123def456",
   "object": "video",
   "model": "sora-2",
-  "status": "succeeded",
+  "status": "completed",
   "progress": 100,
   "created_at": 1702388400,
   "completed_at": 1702388500,
   "seconds": "10",
-  "size": "1280x720",
-  "url": "https://..."
+  "size": "1280x720"
 }
 ```
 
@@ -286,7 +290,7 @@ curl -X POST "http://your-server/v1/videos" \
 
 ### GET /v1/videos/{video_id}
 
-获取视频生成任务状态。
+获取视频生成任务状态（new-api-main 兼容格式）。
 
 **路径参数:**
 - `video_id`: 视频任务 ID
@@ -303,7 +307,7 @@ curl -X GET "http://your-server/v1/videos/sora-2-abc123def456" \
   "id": "sora-2-abc123def456",
   "object": "video",
   "model": "sora-2",
-  "status": "processing",
+  "status": "in_progress",
   "progress": 65,
   "created_at": 1702388400,
   "seconds": "10",
@@ -311,30 +315,124 @@ curl -X GET "http://your-server/v1/videos/sora-2-abc123def456" \
 }
 ```
 
-**状态值:**
+**状态值 (new-api-main 兼容):**
+- `queued` - 排队中
+- `pending` - 等待中
+- `in_progress` - 处理中
 - `processing` - 处理中
-- `succeeded` - 成功
+- `completed` - 成功
 - `failed` - 失败
+- `cancelled` - 已取消
+
+**完整响应字段:**
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `id` | string | 任务 ID |
+| `object` | string | 固定为 "video" |
+| `model` | string | 模型名称 |
+| `status` | string | 任务状态 |
+| `progress` | integer | 进度百分比 (0-100) |
+| `created_at` | integer | 创建时间戳（秒） |
+| `completed_at` | integer | 完成时间戳（秒，可选） |
+| `expires_at` | integer | 过期时间戳（秒，可选） |
+| `seconds` | string | 视频时长 |
+| `size` | string | 视频分辨率 |
+| `remixed_from_video_id` | string | Remix 来源视频 ID（可选） |
+| `error` | object | 错误信息 `{message, code}`（失败时） |
+| `metadata` | object | 扩展元数据（可选） |
 
 ---
 
 ### GET /v1/videos/{video_id}/content
 
-获取视频内容（重定向到视频 URL）。
+获取视频直链（302 重定向到实际视频 URL）。
+
+> **注意**: 此端点返回 302 重定向到视频直链，而不是视频文件本身。new-api 会将此 URL 作为最终结果返回给用户。
 
 **路径参数:**
 - `video_id`: 视频任务 ID
 
 **请求示例:**
 ```bash
+# 直接下载视频（-L 跟随重定向）
 curl -X GET "http://your-server/v1/videos/sora-2-abc123def456/content" \
   -H "Authorization: Bearer your-api-key" \
   -L -o video.mp4
+
+# 仅获取重定向 URL
+curl -X GET "http://your-server/v1/videos/sora-2-abc123def456/content" \
+  -H "Authorization: Bearer your-api-key" \
+  -I
 ```
 
 **响应:**
-- 成功：302 重定向到视频 URL
-- 失败：400 错误（任务未完成或失败）
+- 成功：`302 Found` 重定向到视频直链（如 `https://xxx.mp4`）
+- 失败：`400 Bad Request`（任务未完成或失败）
+- 未找到：`404 Not Found`（任务不存在）
+
+**错误响应格式:**
+```json
+{
+  "error": {
+    "message": "Task not completed. Current status: in_progress",
+    "code": "task_not_completed"
+  }
+}
+```
+
+**错误码:**
+| code | 描述 |
+|------|------|
+| `task_not_found` | 任务不存在 |
+| `task_not_completed` | 任务未完成 |
+| `content_not_found` | 视频内容不可用 |
+| `generation_failed` | 视频生成失败 |
+
+---
+
+### POST /v1/videos/{video_id}/remix
+
+基于现有视频创建 Remix（new-api 兼容）。
+
+**路径参数:**
+- `video_id`: 源视频 ID
+
+**请求参数:**
+
+| 参数 | 类型 | 必填 | 描述 |
+|------|------|------|------|
+| `prompt` | string | 是 | Remix 提示词 |
+| `model` | string | 否 | 模型：`sora-2` 或 `sora-2-pro` |
+| `seconds` | string | 否 | 时长：`10` 或 `15` |
+| `size` | string | 否 | 分辨率 |
+| `style_id` | string | 否 | 视频风格 |
+| `async_mode` | boolean | 否 | 异步模式，默认 true |
+
+**请求示例:**
+```bash
+curl -X POST "http://your-server/v1/videos/sora-2-abc123def456/remix" \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Make it more colorful and vibrant"
+  }'
+```
+
+**响应示例:**
+```json
+{
+  "id": "sora-2-newvideo789",
+  "object": "video",
+  "model": "sora-2",
+  "status": "in_progress",
+  "progress": 0,
+  "created_at": 1702388400,
+  "seconds": "15",
+  "size": "1280x720",
+  "remixed_from_video_id": "sora-2-abc123def456"
+}
+```
 
 ---
 

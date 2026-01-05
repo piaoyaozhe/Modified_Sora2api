@@ -10,6 +10,8 @@
 
 Sora2API 是一个 OpenAI 兼容的 Sora API 服务，支持文生图、文生视频、图生视频、视频 Remix、角色创建等功能。
 
+**✅ 已兼容 [new-api](https://github.com/Calcium-Ion/new-api) sora2 渠道对接格式**
+
 ### 主要功能
 
 - 文生图片 / 图生图片
@@ -40,6 +42,55 @@ Sora2API 是一个 OpenAI 兼容的 Sora API 服务，支持文生图、文生�
 
 ---
 
+## new-api 对接说明
+
+本项目的 `/v1/videos` 接口已完全兼容 new-api 的 sora2 渠道格式。
+
+### 配置方式
+
+在 new-api 中添加渠道：
+- **类型**: Sora
+- **Base URL**: `http://your-sora2api-server:8000`
+- **密钥**: 你的 API Key（默认 `han1234`）
+- **模型**: `sora-2`, `sora-2-pro`
+
+### 支持的接口
+
+| 接口 | 描述 |
+|------|------|
+| `POST /v1/videos` | 创建视频生成任务 |
+| `GET /v1/videos/{id}` | 获取任务状态 |
+| `GET /v1/videos/{id}/content` | 获取视频直链（302 重定向） |
+| `POST /v1/videos/{id}/remix` | 视频 Remix |
+
+### 响应格式
+
+```json
+{
+  "id": "sora-2-abc123def456",
+  "object": "video",
+  "model": "sora-2",
+  "status": "in_progress",
+  "progress": 50,
+  "created_at": 1702388400,
+  "completed_at": 1702388500,
+  "seconds": "10",
+  "size": "1280x720",
+  "error": null
+}
+```
+
+### 状态值
+
+| 状态 | 描述 |
+|------|------|
+| `queued` | 排队中 |
+| `in_progress` | 处理中 |
+| `completed` | 成功 |
+| `failed` | 失败 |
+
+---
+
 ## 快速开始
 
 ```bash
@@ -67,8 +118,7 @@ python main.py
 │   ├── hancat.db          # SQLite 数据库
 │   └── proxy.txt          # 代理池配置（每行一个代理地址）
 ├── docs/                   # API 文档
-│   ├── OPENAI_API.md      # OpenAI 标准格式 API 文档
-│   └── SORA_API.md        # Sora API 文档
+│   └── API_V1_DOCUMENTATION.md # v1 API 文档
 ├── src/                    # 源代码
 │   ├── api/               # API 路由
 │   │   ├── admin.py       # 管理接口
@@ -123,7 +173,7 @@ ip:port:user:pass
 ## API 文档
 
 详细 API 文档请参考：
-- [v1 接口文档](docs/API_V1_DOCUMENTATION.md) - 完整的 v1 API 接口文档
+- [v1 接口文档](docs/API_V1_DOCUMENTATION.md) - 完整的 v1 API 接口文档（new-api 兼容）
 
 ### 主要接口
 
@@ -131,8 +181,10 @@ ip:port:user:pass
 |------|------|------|
 | `/v1/models` | GET | 获取可用模型列表 |
 | `/v1/chat/completions` | POST | 统一聊天补全接口（支持流式） |
-| `/v1/videos` | POST | 创建视频生成任务 |
-| `/v1/videos/{id}` | GET | 获取视频任务状态 |
+| `/v1/videos` | POST | 创建视频生成任务（new-api 兼容） |
+| `/v1/videos/{id}` | GET | 获取视频任务状态（new-api 兼容） |
+| `/v1/videos/{id}/content` | GET | 获取视频直链（302 重定向） |
+| `/v1/videos/{id}/remix` | POST | 视频 Remix（new-api 兼容） |
 | `/v1/images/generations` | POST | 图片生成 |
 | `/v1/characters` | POST | 角色创建 |
 | `/v1/stats` | GET | 系统统计 |
