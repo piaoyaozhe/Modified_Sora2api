@@ -1529,11 +1529,23 @@ class Database:
     async def update_proxy_config(self, enabled: bool, proxy_url: Optional[str], proxy_pool_enabled: bool = False):
         """Update proxy configuration"""
         async with self._connect() as db:
-            await db.execute("""
-                UPDATE proxy_config
-                SET proxy_enabled = ?, proxy_url = ?, proxy_pool_enabled = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = 1
-            """, (enabled, proxy_url, proxy_pool_enabled))
+            # First check if row exists
+            cursor = await db.execute("SELECT COUNT(*) FROM proxy_config WHERE id = 1")
+            count = await cursor.fetchone()
+            row_exists = self._get_count_value(count) > 0
+            
+            if row_exists:
+                await db.execute("""
+                    UPDATE proxy_config
+                    SET proxy_enabled = ?, proxy_url = ?, proxy_pool_enabled = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = 1
+                """, (enabled, proxy_url, proxy_pool_enabled))
+            else:
+                # Insert if not exists
+                await db.execute("""
+                    INSERT INTO proxy_config (id, proxy_enabled, proxy_url, proxy_pool_enabled)
+                    VALUES (1, ?, ?, ?)
+                """, (enabled, proxy_url, proxy_pool_enabled))
             await db.commit()
 
     # Watermark-free config operations
@@ -1553,7 +1565,18 @@ class Database:
                                           custom_parse_url: str = None, custom_parse_token: str = None):
         """Update watermark-free configuration"""
         async with self._connect() as db:
-            if parse_method is None and custom_parse_url is None and custom_parse_token is None:
+            # First check if row exists
+            cursor = await db.execute("SELECT COUNT(*) FROM watermark_free_config WHERE id = 1")
+            count = await cursor.fetchone()
+            row_exists = self._get_count_value(count) > 0
+            
+            if not row_exists:
+                # Insert if not exists
+                await db.execute("""
+                    INSERT INTO watermark_free_config (id, watermark_free_enabled, parse_method, custom_parse_url, custom_parse_token)
+                    VALUES (1, ?, ?, ?, ?)
+                """, (enabled, parse_method or "third_party", custom_parse_url, custom_parse_token))
+            elif parse_method is None and custom_parse_url is None and custom_parse_token is None:
                 # Only update enabled status
                 await db.execute("""
                     UPDATE watermark_free_config
@@ -1588,8 +1611,19 @@ class Database:
         async with self._connect() as db:
             # Convert empty string to None
             new_base_url = base_url if base_url else None
-
-            if self.db_type == "mysql":
+            
+            # First check if row exists
+            cursor = await db.execute("SELECT COUNT(*) FROM cache_config WHERE id = 1")
+            count = await cursor.fetchone()
+            row_exists = self._get_count_value(count) > 0
+            
+            if not row_exists:
+                # Insert if not exists
+                await db.execute("""
+                    INSERT INTO cache_config (id, cache_enabled, cache_timeout, cache_base_url)
+                    VALUES (1, ?, ?, ?)
+                """, (enabled if enabled is not None else False, timeout if timeout is not None else 600, new_base_url))
+            elif self.db_type == "mysql":
                 # MySQL uses COALESCE and IFNULL for atomic update
                 await db.execute("""
                     UPDATE cache_config
@@ -1627,14 +1661,26 @@ class Database:
     async def update_generation_config(self, image_timeout: int = None, video_timeout: int = None):
         """Update generation configuration - uses atomic COALESCE to avoid read-then-write"""
         async with self._connect() as db:
-            # Use COALESCE for atomic update - only update fields that are provided
-            await db.execute("""
-                UPDATE generation_config
-                SET image_timeout = COALESCE(?, image_timeout),
-                    video_timeout = COALESCE(?, video_timeout),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = 1
-            """, (image_timeout, video_timeout))
+            # First check if row exists
+            cursor = await db.execute("SELECT COUNT(*) FROM generation_config WHERE id = 1")
+            count = await cursor.fetchone()
+            row_exists = self._get_count_value(count) > 0
+            
+            if not row_exists:
+                # Insert if not exists
+                await db.execute("""
+                    INSERT INTO generation_config (id, image_timeout, video_timeout)
+                    VALUES (1, ?, ?)
+                """, (image_timeout if image_timeout is not None else 300, video_timeout if video_timeout is not None else 1500))
+            else:
+                # Use COALESCE for atomic update - only update fields that are provided
+                await db.execute("""
+                    UPDATE generation_config
+                    SET image_timeout = COALESCE(?, image_timeout),
+                        video_timeout = COALESCE(?, video_timeout),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = 1
+                """, (image_timeout, video_timeout))
             await db.commit()
 
     # Token refresh config operations
@@ -1653,11 +1699,23 @@ class Database:
     async def update_token_refresh_config(self, at_auto_refresh_enabled: bool):
         """Update token refresh configuration"""
         async with self._connect() as db:
-            await db.execute("""
-                UPDATE token_refresh_config
-                SET at_auto_refresh_enabled = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = 1
-            """, (at_auto_refresh_enabled,))
+            # First check if row exists
+            cursor = await db.execute("SELECT COUNT(*) FROM token_refresh_config WHERE id = 1")
+            count = await cursor.fetchone()
+            row_exists = self._get_count_value(count) > 0
+            
+            if not row_exists:
+                # Insert if not exists
+                await db.execute("""
+                    INSERT INTO token_refresh_config (id, at_auto_refresh_enabled)
+                    VALUES (1, ?)
+                """, (at_auto_refresh_enabled,))
+            else:
+                await db.execute("""
+                    UPDATE token_refresh_config
+                    SET at_auto_refresh_enabled = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = 1
+                """, (at_auto_refresh_enabled,))
             await db.commit()
 
     # Cloudflare Solver config operations
@@ -1675,7 +1733,18 @@ class Database:
     async def update_cloudflare_solver_config(self, solver_enabled: bool, solver_api_url: str = None):
         """Update Cloudflare Solver configuration"""
         async with self._connect() as db:
-            if solver_api_url is not None:
+            # First check if row exists
+            cursor = await db.execute("SELECT COUNT(*) FROM cloudflare_solver_config WHERE id = 1")
+            count = await cursor.fetchone()
+            row_exists = self._get_count_value(count) > 0
+            
+            if not row_exists:
+                # Insert if not exists
+                await db.execute("""
+                    INSERT INTO cloudflare_solver_config (id, solver_enabled, solver_api_url)
+                    VALUES (1, ?, ?)
+                """, (solver_enabled, solver_api_url or "http://localhost:8000/v1/challenge"))
+            elif solver_api_url is not None:
                 await db.execute("""
                     UPDATE cloudflare_solver_config
                     SET solver_enabled = ?, solver_api_url = ?, updated_at = CURRENT_TIMESTAMP
