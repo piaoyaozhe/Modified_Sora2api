@@ -461,6 +461,8 @@ async def _process_video_generation_v2(video_id: str):
         # Generate video
         result_url = None
         last_chunk = None
+        chunk_count = 0
+        
         async for chunk in generation_handler.handle_generation(
             model=task_info["internal_model"],
             prompt=task_info["prompt"],
@@ -469,6 +471,7 @@ async def _process_video_generation_v2(video_id: str):
             stream=True,
             style_id=task_info.get("style_id")
         ):
+            chunk_count += 1
             if isinstance(chunk, str):
                 last_chunk = chunk
                 # Extract progress percentage if present
@@ -513,15 +516,24 @@ async def _process_video_generation_v2(video_id: str):
                                             content_data = json.loads(content)
                                             if isinstance(content_data, dict):
                                                 url = content_data.get("url")
-                                                if url and ("mp4" in url or "video" in url):
+                                                if url and ("mp4" in url or "video" in url or "tmp/" in url):
                                                     result_url = url
                                                     print(f"[VideoTask] {video_id}: Found URL in content JSON: {result_url[:100]}...")
                                         except:
                                             pass
                     except:
                         pass
+                
+                # Pattern 4: Any URL with video-like extensions or paths
+                if not result_url:
+                    any_url_match = re.search(r"(https?://[^\s'\"<>\]]+(?:\.mp4|/tmp/|/video)[^\s'\"<>\]]*)", chunk)
+                    if any_url_match:
+                        result_url = any_url_match.group(1)
+                        print(f"[VideoTask] {video_id}: Found URL with pattern 4: {result_url[:100]}...")
         
-        print(f"[VideoTask] {video_id}: Generation loop finished. result_url={result_url is not None}")
+        print(f"[VideoTask] {video_id}: Generation loop finished. chunk_count={chunk_count}, result_url={result_url is not None}")
+        if last_chunk:
+            print(f"[VideoTask] {video_id}: Last chunk (truncated): {last_chunk[:200]}...")
         
         # Try to get result from database if not found in stream
         if not result_url:
