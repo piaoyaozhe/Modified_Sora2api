@@ -39,36 +39,48 @@ class ProxyManager:
         """Parse proxy line and convert to standard URL format
         
         Supported formats:
-        - http://host:port
         - http://user:pass@host:port
-        - socks5://host:port
+        - https://user:pass@host:port
         - socks5://user:pass@host:port
-        - host:port (assumes http)
+        - socks5h://user:pass@host:port
+        - host:port (assumes http, no auth)
         - host:port:user:pass (IP:端口:用户名:密码 format)
         """
         line = line.strip()
         if not line:
             return None
         
-        # Already a URL format
-        if line.startswith("http://") or line.startswith("https://") or line.startswith("socks5://"):
+        # Already a URL format (http, https, socks5, socks5h)
+        if line.startswith(("http://", "https://", "socks5://", "socks5h://")):
             return line
         
-        parts = line.split(":")
+        # Count colons to determine format
+        colon_count = line.count(":")
         
-        # Format: host:port
-        if len(parts) == 2:
-            host, port = parts
-            return f"http://{host}:{port}"
+        # Format: host:port (exactly 1 colon)
+        if colon_count == 1:
+            host, port = line.split(":")
+            if port.isdigit():
+                return f"http://{host}:{port}"
+            print(f"⚠️ Invalid proxy format (port not numeric): {line}")
+            return None
         
-        # Format: host:port:user:pass (IP:端口:用户名:密码)
-        if len(parts) == 4:
-            host, port, user, password = parts
-            return f"http://{user}:{password}@{host}:{port}"
+        # Format: host:port:user:pass (exactly 3 colons)
+        # Split from the right to handle passwords with colons
+        if colon_count >= 3:
+            parts = line.split(":")
+            if len(parts) >= 4:
+                host = parts[0]
+                port = parts[1]
+                user = parts[2]
+                # Password might contain colons, join remaining parts
+                password = ":".join(parts[3:])
+                if port.isdigit():
+                    return f"http://{user}:{password}@{host}:{port}"
         
-        # Unknown format, return as-is and let it fail later if invalid
+        # Unknown format
         print(f"⚠️ Unknown proxy format: {line}")
-        return line
+        return None
     
     async def get_proxy_url(self, token_id: Optional[int] = None) -> Optional[str]:
         """Get proxy URL if enabled, with pool rotation support
