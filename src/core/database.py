@@ -1210,6 +1210,30 @@ class Database:
                     result[token_id] = TokenStats(**data)
             return result
 
+    async def ensure_token_stats_row(self, token_id: int):
+        """Ensure a stats row exists for a token (safe for SQLite/MySQL)"""
+        async with self._connect() as db:
+            await db.execute("""
+                INSERT INTO token_stats (token_id)
+                SELECT ?
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM token_stats WHERE token_id = ?
+                )
+            """, (token_id, token_id))
+            await db.commit()
+
+    async def ensure_token_stats_rows(self):
+        """Ensure stats rows exist for all tokens"""
+        async with self._connect() as db:
+            await db.execute("""
+                INSERT INTO token_stats (token_id)
+                SELECT t.id
+                FROM tokens t
+                LEFT JOIN token_stats s ON s.token_id = t.id
+                WHERE s.token_id IS NULL
+            """)
+            await db.commit()
+
     async def get_stats(self) -> dict:
         """Get aggregated statistics across all tokens"""
         from datetime import date
@@ -1270,6 +1294,12 @@ class Database:
                         "SELECT id FROM token_stats WHERE token_id = %s FOR UPDATE",
                         (token_id,)
                     )
+                    row = await cursor.fetchone()
+                    if not row:
+                        await cursor.execute(
+                            "INSERT INTO token_stats (token_id) VALUES (%s)",
+                            (token_id,)
+                        )
                     # Now update atomically
                     await cursor.execute("""
                         UPDATE token_stats
@@ -1282,6 +1312,13 @@ class Database:
         else:
             # SQLite: simple atomic update
             async with self._connect() as db:
+                await db.execute("""
+                    INSERT INTO token_stats (token_id)
+                    SELECT ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM token_stats WHERE token_id = ?
+                    )
+                """, (token_id, token_id))
                 await db.execute("""
                     UPDATE token_stats
                     SET image_count = image_count + 1,
@@ -1307,6 +1344,12 @@ class Database:
                         "SELECT id FROM token_stats WHERE token_id = %s FOR UPDATE",
                         (token_id,)
                     )
+                    row = await cursor.fetchone()
+                    if not row:
+                        await cursor.execute(
+                            "INSERT INTO token_stats (token_id) VALUES (%s)",
+                            (token_id,)
+                        )
                     # Now update atomically
                     await cursor.execute("""
                         UPDATE token_stats
@@ -1319,6 +1362,13 @@ class Database:
         else:
             # SQLite: simple atomic update
             async with self._connect() as db:
+                await db.execute("""
+                    INSERT INTO token_stats (token_id)
+                    SELECT ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM token_stats WHERE token_id = ?
+                    )
+                """, (token_id, token_id))
                 await db.execute("""
                     UPDATE token_stats
                     SET video_count = video_count + 1,
@@ -1344,6 +1394,12 @@ class Database:
                         "SELECT id FROM token_stats WHERE token_id = %s FOR UPDATE",
                         (token_id,)
                     )
+                    row = await cursor.fetchone()
+                    if not row:
+                        await cursor.execute(
+                            "INSERT INTO token_stats (token_id) VALUES (%s)",
+                            (token_id,)
+                        )
                     # Now update atomically
                     await cursor.execute("""
                         UPDATE token_stats
@@ -1358,6 +1414,13 @@ class Database:
         else:
             # SQLite: simple atomic update
             async with self._connect() as db:
+                await db.execute("""
+                    INSERT INTO token_stats (token_id)
+                    SELECT ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM token_stats WHERE token_id = ?
+                    )
+                """, (token_id, token_id))
                 await db.execute("""
                     UPDATE token_stats
                     SET error_count = error_count + 1,
@@ -1472,6 +1535,42 @@ class Database:
                 updates.append("updated_at = CURRENT_TIMESTAMP")
                 params.append(log_id)
                 query = f"UPDATE request_logs SET {', '.join(updates)} WHERE id = ?"
+                await db.execute(query, params)
+                await db.commit()
+
+    async def update_request_log_by_task_id(self, task_id: str, response_body: Optional[str] = None,
+                                            status_code: Optional[int] = None, duration: Optional[float] = None):
+        """Update latest in-progress request log for a task"""
+        async with self._connect() as db:
+            updates = []
+            params = []
+
+            if response_body is not None:
+                updates.append("response_body = ?")
+                params.append(response_body)
+            if status_code is not None:
+                updates.append("status_code = ?")
+                params.append(status_code)
+            if duration is not None:
+                updates.append("duration = ?")
+                params.append(duration)
+
+            if updates:
+                updates.append("updated_at = CURRENT_TIMESTAMP")
+                params.append(task_id)
+                query = f"""
+                    UPDATE request_logs
+                    SET {', '.join(updates)}
+                    WHERE id = (
+                        SELECT id FROM (
+                            SELECT id
+                            FROM request_logs
+                            WHERE task_id = ? AND status_code = -1
+                            ORDER BY id DESC
+                            LIMIT 1
+                        ) AS sub
+                    )
+                """
                 await db.execute(query, params)
                 await db.commit()
 

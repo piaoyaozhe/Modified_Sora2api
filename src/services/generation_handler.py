@@ -795,6 +795,14 @@ class GenerationHandler:
                     debug_logger.log_info(f"Released concurrency slot for token {token_id} due to timeout")
 
                 await self.db.update_task(task_id, "failed", 0, error_message=f"Generation timeout after {elapsed_time:.1f} seconds")
+                await self.db.update_request_log_by_task_id(
+                    task_id,
+                    response_body=json.dumps({
+                        "error": f"Generation timeout after {elapsed_time:.1f} seconds"
+                    }),
+                    status_code=408,
+                    duration=elapsed_time
+                )
                 raise Exception(f"Upstream API timeout: Generation exceeded {timeout} seconds limit")
 
             # Get adaptive polling interval for video, or use base interval for image
@@ -911,6 +919,12 @@ class GenerationHandler:
 
                                     # Update task status
                                     await self.db.update_task(task_id, "failed", 0, error_message=error_message)
+                                    await self.db.update_request_log_by_task_id(
+                                        task_id,
+                                        response_body=json.dumps({"error": error_message}),
+                                        status_code=400,
+                                        duration=time.time() - start_time
+                                    )
 
                                     # Release resources
                                     if token_id and self.concurrency_manager:
@@ -1129,6 +1143,12 @@ class GenerationHandler:
                                     task_id, "completed", 100.0,
                                     result_urls=json.dumps([local_url])
                                 )
+                                await self.db.update_request_log_by_task_id(
+                                    task_id,
+                                    response_body=json.dumps({"task_id": task_id, "status": "success"}),
+                                    status_code=200,
+                                    duration=time.time() - start_time
+                                )
 
                                 if stream:
                                     # Final response with structured content
@@ -1155,9 +1175,15 @@ class GenerationHandler:
                             progress = task_resp.get("progress_pct", 0) * 100
 
                             if status == "succeeded":
-                                # Extract URLs
+                                # Extract URLs and clean trailing parentheses
                                 generations = task_resp.get("generations", [])
-                                urls = [gen.get("url") for gen in generations if gen.get("url")]
+                                urls = []
+                                for gen in generations:
+                                    url = gen.get("url")
+                                    if url:
+                                        # Remove trailing ) that may be incorrectly included in the URL
+                                        url = url.rstrip(')')
+                                        urls.append(url)
 
                                 if urls:
                                     # Cache image files
@@ -1219,6 +1245,12 @@ class GenerationHandler:
                                         task_id, "completed", 100.0,
                                         result_urls=json.dumps(local_urls)
                                     )
+                                    await self.db.update_request_log_by_task_id(
+                                        task_id,
+                                        response_body=json.dumps({"task_id": task_id, "status": "success"}),
+                                        status_code=200,
+                                        duration=time.time() - start_time
+                                    )
 
                                     if stream:
                                         # Final response with structured content
@@ -1235,6 +1267,12 @@ class GenerationHandler:
                             elif status == "failed":
                                 error_msg = task_resp.get("error_message", "Generation failed")
                                 await self.db.update_task(task_id, "failed", progress, error_message=error_msg)
+                                await self.db.update_request_log_by_task_id(
+                                    task_id,
+                                    response_body=json.dumps({"error": error_msg}),
+                                    status_code=500,
+                                    duration=time.time() - start_time
+                                )
                                 raise Exception(error_msg)
 
                             elif status == "processing":
@@ -1301,6 +1339,14 @@ class GenerationHandler:
             debug_logger.log_info(f"Released concurrency slot for token {token_id} due to unexpected loop exit")
 
         await self.db.update_task(task_id, "failed", 0, error_message=f"Generation timeout after {timeout} seconds")
+        await self.db.update_request_log_by_task_id(
+            task_id,
+            response_body=json.dumps({
+                "error": f"Generation timeout after {timeout} seconds"
+            }),
+            status_code=408,
+            duration=time.time() - start_time
+        )
         raise Exception(f"Upstream API timeout: Generation exceeded {timeout} seconds limit")
     
     def _format_stream_chunk(self, content: str = None, reasoning_content: str = None,
