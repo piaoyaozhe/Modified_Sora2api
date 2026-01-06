@@ -215,12 +215,21 @@ class ProxyManager:
         """Test a single proxy by connecting to sora.chatgpt.com
         
         Args:
-            proxy_url: Proxy URL to test
+            proxy_url: Proxy URL to test (will be parsed to standard format)
             timeout: Request timeout in seconds
             
         Returns:
             dict with valid, latency, error fields
         """
+        # Parse proxy URL to standard format
+        parsed_proxy = self._parse_proxy_line(proxy_url)
+        if not parsed_proxy:
+            return {
+                "valid": False,
+                "latency": None,
+                "error": f"无效的代理格式: {proxy_url}"
+            }
+        
         start_time = datetime.now()
         test_url = "https://sora.chatgpt.com/"
         
@@ -229,7 +238,7 @@ class ProxyManager:
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.get(
                     test_url,
-                    proxy=proxy_url,
+                    proxy=parsed_proxy,
                     timeout=aiohttp.ClientTimeout(total=timeout),
                     allow_redirects=True
                 ) as response:
