@@ -985,13 +985,25 @@ class Database:
     
     async def update_token_usage(self, token_id: int):
         """Update token usage"""
-        async with self._connect() as db:
-            await db.execute("""
-                UPDATE tokens 
-                SET last_used_at = CURRENT_TIMESTAMP, use_count = use_count + 1
-                WHERE id = ?
-            """, (token_id,))
-            await db.commit()
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with self._connect() as db:
+                    await db.execute("""
+                        UPDATE tokens 
+                        SET last_used_at = CURRENT_TIMESTAMP, use_count = use_count + 1
+                        WHERE id = ?
+                    """, (token_id,))
+                    await db.commit()
+                    return
+            except Exception as e:
+                error_msg = str(e)
+                # MySQL/TiDB optimistic lock conflict
+                if "1020" in error_msg or "Record has changed" in error_msg or "Deadlock" in error_msg:
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(0.1 * (attempt + 1))
+                        continue
+                raise
     
     async def update_token_status(self, token_id: int, is_active: bool):
         """Update token status with retry for concurrent updates"""
