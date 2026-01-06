@@ -637,11 +637,35 @@ class GenerationHandler:
             await self.token_manager.record_usage(token_obj.id, is_video=is_video)
             
             # Poll for results with timeout
-            async for chunk in self._poll_task_result(task_id, token_obj.token, is_video, stream, prompt, token_obj.id, use_pending_v1):
-                yield chunk
-            
-            # Record success
-            await self.token_manager.record_success(token_obj.id, is_video=is_video)
+            generation_completed = False
+            try:
+                async for chunk in self._poll_task_result(task_id, token_obj.token, is_video, stream, prompt, token_obj.id, use_pending_v1):
+                    yield chunk
+                generation_completed = True
+            except GeneratorExit:
+                # Client disconnected during streaming
+                # Check if task was actually completed by checking database
+                task_data = await self.db.get_task(task_id)
+                if task_data and task_data.status == "completed":
+                    generation_completed = True
+                    debug_logger.log_info(f"Client disconnected but task {task_id} was completed")
+                else:
+                    debug_logger.log_info(f"Client disconnected, task {task_id} status: {task_data.status if task_data else 'unknown'}")
+                raise
+            finally:
+                # Always update log and stats when generation completes successfully
+                if generation_completed:
+                    # Record success
+                    await self.token_manager.record_success(token_obj.id, is_video=is_video)
+                    
+                    # Update log with success
+                    duration = time.time() - start_time
+                    await self._log_request_complete(
+                        log_id,
+                        {"task_id": task_id, "status": "success"},
+                        200,
+                        duration
+                    )
 
             # Release lock for image generation
             if is_image:
@@ -654,15 +678,9 @@ class GenerationHandler:
             if is_video and self.concurrency_manager:
                 await self.concurrency_manager.release_video(token_obj.id)
 
-            # Update log with success
-            duration = time.time() - start_time
-            await self._log_request_complete(
-                log_id,
-                {"task_id": task_id, "status": "success"},
-                200,
-                duration
-            )
-
+        except GeneratorExit:
+            # Re-raise GeneratorExit to allow proper cleanup
+            raise
         except Exception as e:
             # Release lock for image generation on error
             if is_image and token_obj:
