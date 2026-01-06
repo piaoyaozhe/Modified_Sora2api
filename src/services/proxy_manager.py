@@ -2,7 +2,6 @@
 from typing import Optional, List, Dict
 from pathlib import Path
 import asyncio
-import aiohttp
 from datetime import datetime
 from ..core.database import Database
 from ..core.models import ProxyConfig
@@ -225,6 +224,8 @@ class ProxyManager:
     async def test_single_proxy(self, proxy_url: str, timeout: int = 10) -> dict:
         """Test a single proxy by connecting to sora.chatgpt.com
         
+        Uses curl_cffi which natively supports SOCKS5/SOCKS5H proxies.
+        
         Args:
             proxy_url: Proxy URL to test (will be parsed to standard format)
             timeout: Request timeout in seconds
@@ -232,6 +233,8 @@ class ProxyManager:
         Returns:
             dict with valid, latency, error fields
         """
+        from curl_cffi.requests import AsyncSession
+        
         # Parse proxy URL to standard format
         parsed_proxy = self._parse_proxy_line(proxy_url)
         if not parsed_proxy:
@@ -245,45 +248,47 @@ class ProxyManager:
         test_url = "https://sora.chatgpt.com/"
         
         try:
-            connector = aiohttp.TCPConnector(ssl=False)
-            async with aiohttp.ClientSession(connector=connector) as session:
-                async with session.get(
+            async with AsyncSession() as session:
+                response = await session.get(
                     test_url,
                     proxy=parsed_proxy,
-                    timeout=aiohttp.ClientTimeout(total=timeout),
-                    allow_redirects=True
-                ) as response:
-                    latency = (datetime.now() - start_time).total_seconds() * 1000
-                    # 200 或 403 都表示代理可以连接到目标
-                    if response.status in [200, 403]:
-                        return {
-                            "valid": True,
-                            "latency": round(latency, 2),
-                            "error": None
-                        }
-                    else:
-                        return {
-                            "valid": False,
-                            "latency": None,
-                            "error": f"HTTP {response.status}"
-                        }
+                    timeout=timeout,
+                    allow_redirects=True,
+                    impersonate="chrome120"
+                )
+                latency = (datetime.now() - start_time).total_seconds() * 1000
+                # 200 或 403 都表示代理可以连接到目标
+                if response.status_code in [200, 403]:
+                    return {
+                        "valid": True,
+                        "latency": round(latency, 2),
+                        "error": None
+                    }
+                else:
+                    return {
+                        "valid": False,
+                        "latency": None,
+                        "error": f"HTTP {response.status_code}"
+                    }
         except asyncio.TimeoutError:
             return {
                 "valid": False,
                 "latency": None,
                 "error": "连接超时"
             }
-        except aiohttp.ClientProxyConnectionError as e:
-            return {
-                "valid": False,
-                "latency": None,
-                "error": f"代理连接失败: {str(e)}"
-            }
         except Exception as e:
+            error_msg = str(e)
+            # 简化错误信息
+            if "proxy" in error_msg.lower():
+                return {
+                    "valid": False,
+                    "latency": None,
+                    "error": f"代理连接失败: {error_msg[:100]}"
+                }
             return {
                 "valid": False,
                 "latency": None,
-                "error": str(e)
+                "error": error_msg[:100]
             }
 
     async def test_all_proxies(self, remove_invalid: bool = False) -> dict:
